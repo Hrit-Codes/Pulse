@@ -12,6 +12,10 @@ function App() {
     setGreetMsg(await invoke("greet", { name }));
   }
 
+  async function helloHrit(){
+    setGreetMsg(await invoke("hello_hrit"))
+  }
+
   return (
     <main className="container">
       <h1>Welcome to Tauri + React Hrit</h1>
@@ -43,6 +47,8 @@ function App() {
         />
         <button type="submit">Greet</button>
       </form>
+
+        <button onClick={helloHrit}>click hrit</button>
       <p>{greetMsg}</p>
     </main>
   );
