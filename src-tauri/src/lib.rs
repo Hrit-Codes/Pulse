@@ -9,6 +9,11 @@ fn hello_hrit()-> String{
     format!("Hello hrit from rust")
 }
 
+fn test(){
+    println!("hello world
+");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
