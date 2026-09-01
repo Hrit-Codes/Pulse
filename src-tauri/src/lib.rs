@@ -1,3 +1,8 @@
+pub mod protocol;
+pub mod discover;
+pub mod storage;
+pub mod transfer;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -7,11 +12,6 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn hello_hrit()-> String{
     format!("Hello hrit from rust")
-}
-
-fn test(){
-    println!("hello world
-");
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
