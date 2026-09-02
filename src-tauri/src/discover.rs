@@ -5,7 +5,7 @@ pub mod listener;
 
 pub const PORT:u16 = 45820;
 
-#[derive(Serialize,Deserialize)]
+#[derive(Serialize,Deserialize,Debug)]
 pub struct DeviceInfo{
     pub id: String,
     pub name: String,
