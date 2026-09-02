@@ -3,6 +3,7 @@
 // type --1B
 // 1 frame --4+1+N bytes
 #[repr(u8)]
+#[derive(Debug,PartialEq)]
 pub enum MessageType {
     Discover = 0,
     DiscoverResponse = 1,
@@ -34,6 +35,12 @@ impl MessageType {
     }
 }
 
+#[derive(Debug,PartialEq)]
+pub enum DecodeError{
+    Incomplete,
+    UnknownType(u8)
+}
+
 pub fn encode_frame(message_type:MessageType,payload:&[u8])->Vec<u8>{
     let mut frame = Vec::new();
     let length:[u8;4] = (payload.len() as u32).to_be_bytes();
@@ -43,15 +50,69 @@ pub fn encode_frame(message_type:MessageType,payload:&[u8])->Vec<u8>{
     frame
 }
 
-pub fn decode_frame(buffer:&mut Vec<u8>)->Option<(MessageType,&[u8])>{
+pub fn decode_frame(buffer:&[u8])->Result<(MessageType,Vec<u8>),DecodeError>{
     if buffer.len() >=4 {
         let value = u32::from_be_bytes(buffer[..4].try_into().unwrap());
         let frame_length = 4+1+value as usize;
         if buffer.len()>=frame_length {
             let message_type = MessageType::try_from(buffer[4]);
-            let payload = &buffer[5..frame_length];
-            return Some((message_type.unwrap(),payload))
+            let payload = buffer[5..frame_length].to_vec();
+            if let Some(msg_type) = message_type {
+                return Ok((msg_type,payload));
+            }
+            return Err(DecodeError::UnknownType(buffer[4]));
         }
     }
-    None
+    Err(DecodeError::Incomplete)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_encode(){
+        let msg_type = MessageType::TransferRequest;
+        let payload = b"hi ";
+
+        assert_eq!(encode_frame(msg_type, payload),vec![0,0,0,3, 2, b'h', b'i',b' ']);
+    }
+    
+    #[test]
+    fn test_decode_round_trip(){
+        let payload = b"hi";
+
+        let buffer = encode_frame(MessageType::Chunk, payload);
+        
+        assert_eq!(decode_frame(&buffer),Ok((MessageType::Chunk,payload.to_vec())));
+    }
+    #[test]
+    fn test_decode_empty_payload(){
+        let buffer = encode_frame(MessageType::Chunk, b"");
+        assert_eq!(decode_frame(&buffer),Ok((MessageType::Chunk,vec![])));
+    }
+    #[test]
+    fn test_decode_incomplete_header(){
+        let buffer = [0,0,1];
+        assert_eq!(decode_frame(&buffer),Err(DecodeError::Incomplete));
+    }
+    #[test]
+    fn test_decode_incomplete_payload(){
+        let buffer = [0,0,0,3,7,b'h'];
+        assert_eq!(decode_frame(&buffer),Err(DecodeError::Incomplete));
+    }
+    #[test]
+    fn test_decode_unknown_type(){
+        let buffer = [0,0,0,2,10,b'h',b'i'];
+        assert_eq!(decode_frame(&buffer),Err(DecodeError::UnknownType(10)));
+    }
+    #[test]
+    fn test_decode_two_frames(){
+        let mut buffer = encode_frame(MessageType::Discover, b"hi");
+        let frame2 = encode_frame(MessageType::Chunk, b"hello");
+        buffer.extend_from_slice(&frame2); 
+
+        assert_eq!(decode_frame(&buffer),Ok((MessageType::Discover,b"hi".to_vec())));
+        let buffer = buffer[7..].to_vec();
+        assert_eq!(decode_frame(&buffer),Ok((MessageType::Chunk,b"hello".to_vec())));
+    }
 }
