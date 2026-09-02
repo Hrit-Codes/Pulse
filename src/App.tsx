@@ -1,57 +1,72 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useMemo, useState } from "react";
+import { Device, PageId, Transfer } from "./types";
+import { mockDevices, mockTransfers } from "./mockData";
+import Sidebar from "./components/Sidebar";
+import { DevicesPage } from "./components/DevicesPage";
+import { SettingsPage } from "./components/SettingsPage";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+const LOCAL_DEVICE_NAME="Hrit's Macbook";
+const LOCAL_IP="192.168.1.12";
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+export default function App(){
+  const [page, setPage]=useState<PageId>("devices");
+  const [transfers, setTransfers]=useState<Transfer[]>(mockTransfers);
+
+  const activeTransferCount=useMemo(
+    ()=>transfers.filter((t)=>t.status==="transferring"||t.status==="connecting").length,
+    [transfers]
+  )
+
+  function handleSendFiles(device: Device, files: File[]) {
+    // Wire this to: invoke("start_transfer", { deviceId: device.id, paths: [...] })
+    // The Rust side should then emit "transfer://progress" events with the
+    // shape of `Transfer` in types.ts, which you'd merge into state here.
+    const newTransfer: Transfer = {
+      id: `tx-${Date.now()}`,
+      filename: files[0]?.name ?? "file",
+      sizeBytes: files.reduce((sum, f) => sum + f.size, 0),
+      transferredBytes: 0,
+      direction: "sent",
+      deviceName: device.name,
+      status: "connecting",
+      speedMBps: 0,
+      etaSeconds: null,
+      chunkTotal: 100,
+      chunksDone: 0,
+      verified: null,
+      hash: "pending",
+      date: new Date().toISOString(),
+    };
+    setTransfers((prev) => [newTransfer, ...prev]);
+    setPage("transfers");
   }
 
-  async function helloHrit(){
-    setGreetMsg(await invoke("hello_hrit"))
-  }
-
-  return (
-    <main className="container">
-      <h1>Welcome to Tauri + React Hrit</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+  return(
+    <div className="app-shell">
+      <Sidebar
+        active={page}
+        onNavigate={setPage}
+        localDeviceName={LOCAL_DEVICE_NAME}
+        localIp={LOCAL_IP}
+        activeTransferCount={activeTransferCount}
         />
-        <button type="submit">Greet</button>
-      </form>
+        <main className="app-main">
+          {page==="devices" && (
+            <DevicesPage
+              devices={mockDevices}
+              recentTransfers={transfers.slice(0,4)}
+              onSendFiles={handleSendFiles}
+            />
+          )}
+          {page==="settings" && (
+            <SettingsPage 
+              localDeviceName={LOCAL_DEVICE_NAME}
+              localIp={LOCAL_IP}
+              trustedDevices={mockDevices}/>
+          )}
 
-        <button onClick={helloHrit}>click hrit</button>
-      <p>{greetMsg}</p>
-    </main>
-  );
+        </main>
+
+    </div>
+  )
 }
-
-export default App;
