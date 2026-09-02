@@ -2,7 +2,7 @@ use tokio::net::UdpSocket;
 use std::error::Error;
 use crate::{discover::{DeviceInfo, PORT}, protocol::frame::{MessageType, decode_frame, encode_frame}};
 
-pub async fn broadcast_listen()->Result<(), Box<dyn Error>>{
+pub async fn listen_for_discover()->Result<(), Box<dyn Error>>{
     let listen_socket = UdpSocket::bind(format!("0.0.0.0:{}",PORT)).await?;
     let mut buf = [0u8; 1024];
     loop {

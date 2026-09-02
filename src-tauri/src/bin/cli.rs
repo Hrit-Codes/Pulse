@@ -1,4 +1,5 @@
 use clap::{Subcommand,Parser};
+use pulse_lib::discover::{broadcaster::broadcast_discover, listener::listen_for_discover};
 #[derive(Parser)]
 struct Cli{
     #[command(subcommand)]
@@ -10,13 +11,15 @@ enum Commands {
     Send,
     Listen,
 }
-
-fn main(){
+#[tokio::main]
+async fn main(){
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Discover => {
-            println!("Discover placeholder");
+            if let Err(err) = broadcast_discover().await {
+                eprintln!("{}",err);
+            }
         }
 
         Commands::Send => {
@@ -24,7 +27,9 @@ fn main(){
         }
 
         Commands::Listen => {
-            println!("Listen placeholder");
+            if let Err(err) = listen_for_discover().await {
+                eprintln!("{}",err)
+            }
         }
     }
 }
