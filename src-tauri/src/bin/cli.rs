@@ -28,7 +28,7 @@ async fn main(){
 
         Commands::Listen => {
             if let Err(err) = listen_for_discover().await {
-                eprintln!("{}",err)
+                eprintln ("{}",err)
             }
         }
     }
