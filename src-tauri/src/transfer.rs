@@ -4,6 +4,8 @@ pub mod sender;
 pub mod receiver;
 pub mod stream;
 
+pub const CHUNK_SIZE:usize = 1024*1024;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransferRequest {
     pub transfer_id: String,
@@ -26,21 +28,21 @@ pub struct TransferReject {
 pub struct FileMetadata {
     pub transfer_id: String,
     pub file_hash: String,
-    pub chunk_size: u32,
-    pub total_chunks: u32,
+    pub chunk_size: usize,
+    pub total_chunks: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chunk {
     pub transfer_id: String,
-    pub chunk_index: u32,
+    pub chunk_index: usize,
     pub data: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChunkAck {
     pub transfer_id: String,
-    pub chunk_index: u32,
+    pub chunk_index: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
