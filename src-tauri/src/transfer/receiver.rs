@@ -60,7 +60,7 @@ async fn handle_connection(mut tcp_stream:TcpStream)->Result<(), Box<dyn Error>>
                     hasher.update(&file_bytes);
                     let computed_hash = hex::encode(hasher.finalize());
                     let success = computed_hash == metadata.file_hash;
-                    tokio::fs::write(&request.filename, &file_bytes).await?;
+                    tokio::fs::write("demo_file_received.txt", &file_bytes).await?;
                     let complete = TransferComplete {
                         transfer_id:metadata.transfer_id,
                         success,
