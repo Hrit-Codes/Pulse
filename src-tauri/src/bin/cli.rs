@@ -1,7 +1,8 @@
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::FromStr, sync::Arc};
 
 use clap::{Subcommand,Parser};
-use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover}, transfer::{receiver::receive_file, sender::send_file}};
+use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover},
+    transfer::{receiver::receive_file, sender::send_file}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
 struct Cli{
