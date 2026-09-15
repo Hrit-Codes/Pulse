@@ -3,7 +3,7 @@ use std::{error::Error, io::SeekFrom, net::SocketAddr, sync::Arc};
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferRole, TransferStore}, transfer::{CHUNK_SIZE,
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferRole, TransferStatus, TransferStore}, transfer::{CHUNK_SIZE,
     Chunk, FileMetadata, TransferAccept, TransferComplete, TransferRequest, stream::{read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
@@ -91,13 +91,15 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                     let computed_hash = hex::encode(hasher.finalize());
                     let success = computed_hash == metadata.file_hash;
                     
-                    // tokio::fs::write(request.filename, &file_bytes).await?; //yeah final write,
-                    // not sure about the location though
                     if success {
                         let download_dir = dirs::download_dir()
                             .ok_or("could not resolve downloads directory")?;
                         let final_path = download_dir.join(&request.filename);
                         tokio::fs::rename(&output_path, final_path).await?;
+                        store.update_status(&metadata.transfer_id, TransferStatus::Complete)?;
+                    }else{
+                        store.update_status(&metadata.transfer_id, TransferStatus::Failed)?;
+                        tokio::fs::remove_file(&output_path).await?
                     }
                     let complete = TransferComplete {
                         transfer_id:metadata.transfer_id,
