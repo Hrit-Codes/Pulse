@@ -25,6 +25,20 @@ impl TransferStatus {
     }
 }
 
+pub enum TransferRole {
+    Sender,
+    Receiver
+}
+
+impl TransferRole {
+    pub fn as_str(&self) ->&'static str{
+        match self {
+            Self::Sender => "sender",
+            Self::Receiver => "receiver"
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TransferStore{
     conn: rusqlite::Connection
@@ -44,7 +58,7 @@ impl TransferStore {
                 total_chunks INTEGER NOT NULL DEFAULT 0,
                 chunk_size   INTEGER NOT NULL DEFAULT 0,
                 status       TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN('in_progress','complete','failed')),
-                role         TEXT NOT NULL,
+                role         TEXT NOT NULL CHECK(role IN('sender','receiver')),
                 created_at   TEXT NOT NULL DEFAULT (datetime('now'))
             ); 
             CREATE TABLE IF NOT EXISTS chunks (
@@ -58,14 +72,19 @@ impl TransferStore {
         ")?;
         Ok(Self{conn})
     }
+    pub fn get_chunk_dir(&self)->Result<PathBuf,Box<dyn Error>>{
+        let pulse_dir = get_data_dir()?;
+        let chunk_dir = pulse_dir.join("chunks");
+        Ok(chunk_dir)
+    }
 
     pub fn create_transfer(&self, transfer_id: &str, file_hash: &str, filename: &str, file_size: u64,
-        total_chunks: usize, chunk_size: usize, role: &str) -> Result<(), Box<dyn Error>>{
+        total_chunks: usize, chunk_size: usize, role: TransferRole) -> Result<(), Box<dyn Error>>{
         self.conn.execute("
             INSERT INTO transfers (transfer_id,file_hash,filename,file_size,total_chunks,chunk_size,role) VALUES 
             (?1,?2,?3,?4,?5,?6,?7)
         ",
-        (transfer_id,file_hash,filename,file_size as i64,total_chunks as i64,chunk_size as i64,role))?;
+        (transfer_id,file_hash,filename,file_size as i64,total_chunks as i64,chunk_size as i64,role.as_str()))?;
         Ok(())
     }
     pub fn mark_chunk_received(&self, transfer_id: &str,chunk_index: usize)->Result<(),Box<dyn Error>>{
@@ -117,7 +136,7 @@ mod transfer_store_tests{
         let store = TransferStore::new();
         assert!(store.is_ok());
         let store = store.unwrap();
-        assert!(store.create_transfer("abcd", "hash123", "demo.dat", 67, 32, 10, "receiver").is_ok());
+        assert!(store.create_transfer("abcd", "hash123", "demo.dat", 67, 32, 10, TransferRole::Receiver).is_ok());
         let (r1,r2,r3) = (
             store.mark_chunk_received("abcd", 0),
             store.mark_chunk_received("abcd",2),

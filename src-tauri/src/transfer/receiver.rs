@@ -1,21 +1,24 @@
-use std::{error::Error,net::SocketAddr};
+use std::{error::Error, io::SeekFrom, net::SocketAddr, sync::Arc};
 
 use sha2::{Sha256,Digest};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 
-use crate::{protocol::frame::{MessageType, encode_frame}, transfer::{Chunk, FileMetadata, TransferAccept, TransferComplete, TransferRequest, stream::{read_frame, send_frame}}};
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferRole, TransferStore}, transfer::{CHUNK_SIZE,
+    Chunk, FileMetadata, TransferAccept, TransferComplete, TransferRequest, stream::{read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
+    let store = Arc::new(TransferStore::new()?);
     loop {
         let (stream,_peer_addr) = listener.accept().await?;
-        if let Err(err) = handle_connection(stream).await {
+        if let Err(err) = handle_connection(stream,Arc::clone(&store)).await {
             eprintln!("transfer error: {}",err);
         }
     }
 }
 
-async fn handle_connection(mut tcp_stream:TcpStream)->Result<(), Box<dyn Error>>{
+async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->Result<(), Box<dyn Error>>{ 
+    //might require Arc<Mutex<>> later for concurrent transfers
     let mut buffer = Vec::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
     match msg_type {
@@ -35,14 +38,36 @@ async fn handle_connection(mut tcp_stream:TcpStream)->Result<(), Box<dyn Error>>
                 MessageType::FileMetadata => {
                     let metadata:FileMetadata = bincode::deserialize(&payload)?;
                     println!("file metadata {:?}",metadata);
-                    let mut chunks:Vec<Option<Vec<u8>>> = vec![None;metadata.total_chunks];
+
+                    store.create_transfer(&metadata.transfer_id, 
+                        &metadata.file_hash, &request.filename, request.file_size, 
+                        metadata.total_chunks, metadata.chunk_size, TransferRole::Receiver)?;
+                    
+
+                    let chunk_dir = store.get_chunk_dir()?;
+
+                    //output path is created at base_location/chunks/
+                    let output_path = chunk_dir.join(format!("{}.bin",metadata.transfer_id));
+                    let mut file = tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .read(true)
+                        .write(true)
+                        .open(&output_path)
+                        .await?;
+                    file.set_len(request.file_size).await?;
+
+                    // let mut chunks:Vec<Option<Vec<u8>>> = vec![None;metadata.total_chunks];
                     let mut received_count = 0;
                     loop {
                         let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
                         match msg_type {
                             MessageType::Chunk => {
                                 let chunk:Chunk = bincode::deserialize(&payload)?;
-                                chunks[chunk.chunk_index] = Some(chunk.data);
+                                let offset = (chunk.chunk_index*metadata.chunk_size) as u64;
+                                file.seek(SeekFrom::Start(offset)).await?;
+                                file.write_all(&chunk.data).await?;
+                                store.mark_chunk_received(&metadata.transfer_id, chunk.chunk_index)?;
+                                // chunks[chunk.chunk_index] = Some(chunk.data);
                                 received_count+=1;
                                 if received_count == metadata.total_chunks {
                                     break;
@@ -52,15 +77,21 @@ async fn handle_connection(mut tcp_stream:TcpStream)->Result<(), Box<dyn Error>>
                         };
                         
                     }
-                    let mut file_bytes = Vec::new();
-                    for chunk in chunks{
-                        file_bytes.extend(chunk.unwrap());
-                    }
+                    //buffer for reading bytes
+                    let mut buf = vec![0u8; CHUNK_SIZE];  //stack buffer might be insufficient
+                    file.flush().await?;
+                    file.seek(SeekFrom::Start(0)).await?;
+
                     let mut hasher = Sha256::new();
-                    hasher.update(&file_bytes);
+                    loop{
+                        let n = file.read(&mut buf).await?;
+                        if n == 0 {break;}
+                        hasher.update(&buf[..n]);
+                    }
                     let computed_hash = hex::encode(hasher.finalize());
                     let success = computed_hash == metadata.file_hash;
-                    tokio::fs::write("demo_file_received.txt", &file_bytes).await?;
+                    // tokio::fs::write(request.filename, &file_bytes).await?; //yeah final write,
+                    // not sure about the location though
                     let complete = TransferComplete {
                         transfer_id:metadata.transfer_id,
                         success,
