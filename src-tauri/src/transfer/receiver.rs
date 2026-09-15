@@ -90,8 +90,15 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                     }
                     let computed_hash = hex::encode(hasher.finalize());
                     let success = computed_hash == metadata.file_hash;
+                    
                     // tokio::fs::write(request.filename, &file_bytes).await?; //yeah final write,
                     // not sure about the location though
+                    if success {
+                        let download_dir = dirs::download_dir()
+                            .ok_or("could not resolve downloads directory")?;
+                        let final_path = download_dir.join(&request.filename);
+                        tokio::fs::rename(&output_path, final_path).await?;
+                    }
                     let complete = TransferComplete {
                         transfer_id:metadata.transfer_id,
                         success,

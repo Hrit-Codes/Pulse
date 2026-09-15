@@ -1,1 +1,2 @@
-demo text file
+well i have written the received chunks in a bin file not accumulated in memory and 
+finally after receiving all the chunks i have saved the file in downloads folder

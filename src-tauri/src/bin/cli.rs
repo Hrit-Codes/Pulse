@@ -45,12 +45,12 @@ async fn main(){
         Commands::Receive{port} => {
             let addr = SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), port);
             if let Err(err) = receive_file(addr).await {
-                eprintln!("{}", err);
+                eprintln!("error occurred {}", err);
             } 
         }
         Commands::ListenDiscover=>{ 
             if let Err(err) = listen_for_discover(Arc::clone(&devices)).await {
-                eprintln!("{}", err);
+                eprintln!("error occurred {}", err);
             }
         }
     }
