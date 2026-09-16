@@ -13,7 +13,7 @@ pub async fn send_frame(tcp_stream:&mut TcpStream,bytes:&[u8])->Result<(),io::Er
 }
 
 pub async fn read_frame(tcp_stream:&mut TcpStream,buffer:&mut Vec<u8>)->Result<(MessageType,Vec<u8>),Box<dyn Error>> {
-    let mut scratch = [0u8; 1024];
+    let mut scratch = [0u8; 65536]; //64KB buffer
     loop {
         
         match decode_frame(&buffer) {

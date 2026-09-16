@@ -40,7 +40,7 @@ pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Err
             let mut buf = vec![0u8;CHUNK_SIZE];
             let mut hasher = Sha256::new();
 
-            loop{
+            loop{ //first read
                 let n = file_handle.read(&mut buf).await?;
                 if n == 0 {
                     break;
@@ -64,7 +64,7 @@ pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Err
             send_frame(&mut tcp_stream, &frame).await?; //file metadata has been sent
             
             let mut chunk_index = 0;
-            loop{
+            loop{ //second read
                 let n = file_handle.read(&mut buf).await?;
                 if n == 0 {
                     break;
