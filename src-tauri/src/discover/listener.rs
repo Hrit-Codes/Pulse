@@ -2,7 +2,8 @@ use tokio::{net::UdpSocket, sync::Mutex};
 use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
 use crate::{discover::{DeviceInfo, PORT}, protocol::frame::{MessageType, decode_frame, encode_frame}};
 
-pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>)->Result<(), Box<dyn Error>>{
+pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,
+    my_device:DeviceInfo)->Result<(), Box<dyn Error>>{
     let listen_socket = UdpSocket::bind(format!("0.0.0.0:{}",PORT)).await?;
     let mut buf = [0u8; 1024];
     loop {
@@ -34,12 +35,7 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                     let mut devices = devices.lock().await;
                     devices.insert(data.id.clone(), (data,sender_addr.ip()));
                 }
-                let dummy_device = DeviceInfo {
-                    id: String::from("1234receiver"),
-                    name: String::from("dummy device receiver"),
-                    port: 9000
-                };
-                let payload = match bincode::serialize(&dummy_device) {
+                let payload = match bincode::serialize(&my_device) {
                     Ok(v) => v,
                     Err(err) => {
                         eprintln!("error :{}",err);

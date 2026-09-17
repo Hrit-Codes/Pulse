@@ -9,6 +9,7 @@ pub const CHUNK_SIZE:usize = 1024*1024;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransferRequest {
     pub transfer_id: String,
+    pub sender_id: String,
     pub filename: String,
     pub file_size: u64,
 }
@@ -27,8 +28,8 @@ pub struct TransferReject {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileMetadata {
     pub transfer_id: String,
-    pub file_hash: String,
     pub chunk_size: usize,
+    pub file_hash: String,
     pub total_chunks: usize,
 }
 
@@ -50,4 +51,10 @@ pub struct TransferComplete {
     pub transfer_id: String,
     pub success: bool,
     pub receiver_hash: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ResumeRequest {
+    pub transfer_id: String,
+    pub received_chunks: Vec<usize>,
 }

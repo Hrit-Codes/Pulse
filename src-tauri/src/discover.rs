@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 pub mod broadcaster;
 pub mod listener;
 
@@ -11,4 +10,9 @@ pub struct DeviceInfo{
     pub id: String,
     pub name: String,
     pub port: u16
+}
+impl DeviceInfo {
+    pub fn new(id:String,name:String,port:u16)->Self{
+        Self { id , name, port}
+    }
 }

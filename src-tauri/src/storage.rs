@@ -1,4 +1,5 @@
 use std::{error::Error, path::PathBuf};
+use uuid::Uuid;
 
 fn get_data_dir()->Result<PathBuf,Box<dyn Error>>{
     let base_path =  dirs::data_dir().ok_or("Could not resolve base directory")?; //converting none
@@ -25,20 +26,6 @@ impl TransferStatus {
     }
 }
 
-pub enum TransferRole {
-    Sender,
-    Receiver
-}
-
-impl TransferRole {
-    pub fn as_str(&self) ->&'static str{
-        match self {
-            Self::Sender => "sender",
-            Self::Receiver => "receiver"
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct TransferStore{
     conn: rusqlite::Connection
@@ -58,7 +45,7 @@ impl TransferStore {
                 total_chunks INTEGER NOT NULL DEFAULT 0,
                 chunk_size   INTEGER NOT NULL DEFAULT 0,
                 status       TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN('in_progress','complete','failed')),
-                role         TEXT NOT NULL CHECK(role IN('sender','receiver')),
+                sender_id    TEXT NOT NULL,
                 created_at   TEXT NOT NULL DEFAULT (datetime('now'))
             ); 
             CREATE TABLE IF NOT EXISTS chunks (
@@ -68,23 +55,78 @@ impl TransferStore {
                 PRIMARY KEY (transfer_id, chunk_index),
                 FOREIGN KEY (transfer_id) REFERENCES transfers(transfer_id)
             );
+            CREATE TABLE IF NOT EXISTS device_identity (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sent_transfers (
+                transfer_id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_transfers_file_hash ON transfers(file_hash);
         ")?;
         Ok(Self{conn})
     }
+    
+    pub fn get_or_create_identity(&self)->Result<(String,String),Box<dyn Error>>{
+        let result: rusqlite::Result<(String, String)> = self.conn.query_row(
+            "SELECT id, name FROM device_identity LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+
+        match result {
+            Ok((id, name)) => Ok((id, name)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let id = Uuid::new_v4().to_string();
+                let name = "Rochak's Macbook".to_string();
+
+                self.conn.execute(
+                    "INSERT INTO device_identity (id, name) VALUES (?1, ?2)",
+                    (&id, &name),
+                )?;
+
+                Ok((id, name))
+            }
+            Err(e) => Err(e.into()),
+        } 
+    }
+
     pub fn get_chunk_dir(&self)->Result<PathBuf,Box<dyn Error>>{
         let pulse_dir = get_data_dir()?;
         let chunk_dir = pulse_dir.join("chunks");
         Ok(chunk_dir)
     }
+    
+    pub fn record_sent_transfer(&self,transfer_id: &str,file_path: &str)->Result<(),Box<dyn Error>>{
+        self.conn.execute("
+            INSERT INTO sent_transfers (transfer_id,file_path) VALUES 
+            (?1,?2)
+        ",
+        (transfer_id,file_path))?;
+        Ok(())
+    }
+    pub fn get_sent_transfer_path(&self,transfer_id: &str)->Result<Option<String>,Box<dyn Error>>{
+        let result: rusqlite::Result<String> = self.conn.query_row(
+            "SELECT file_path FROM sent_transfers WHERE transfer_id = ?1",
+            [transfer_id],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(file_path) => Ok(Some(file_path)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
 
     pub fn create_transfer(&self, transfer_id: &str, file_hash: &str, filename: &str, file_size: u64,
-        total_chunks: usize, chunk_size: usize, role: TransferRole) -> Result<(), Box<dyn Error>>{
+        total_chunks: usize, chunk_size: usize, sender_id: &str) -> Result<(), Box<dyn Error>>{
         self.conn.execute("
-            INSERT INTO transfers (transfer_id,file_hash,filename,file_size,total_chunks,chunk_size,role) VALUES 
+            INSERT INTO transfers (transfer_id,file_hash,filename,file_size,total_chunks,chunk_size,sender_id) VALUES 
             (?1,?2,?3,?4,?5,?6,?7)
         ",
-        (transfer_id,file_hash,filename,file_size as i64,total_chunks as i64,chunk_size as i64,role.as_str()))?;
+        (transfer_id,file_hash,filename,file_size as i64,total_chunks as i64,chunk_size as i64,sender_id))?;
         Ok(())
     }
     pub fn mark_chunk_received(&self, transfer_id: &str,chunk_index: usize)->Result<(),Box<dyn Error>>{
@@ -136,7 +178,7 @@ mod transfer_store_tests{
         let store = TransferStore::new();
         assert!(store.is_ok());
         let store = store.unwrap();
-        assert!(store.create_transfer("abcd", "hash123", "demo.dat", 67, 32, 10, TransferRole::Receiver).is_ok());
+        assert!(store.create_transfer("abcd", "hash123", "demo.dat", 67, 32, 10, "sender_id").is_ok());
         let (r1,r2,r3) = (
             store.mark_chunk_received("abcd", 0),
             store.mark_chunk_received("abcd",2),
@@ -159,6 +201,26 @@ mod transfer_store_tests{
             |row| row.get(0),
         ).unwrap();
         assert_eq!(status, "complete");
+        let sender_id: String = store.conn.query_row(
+            "SELECT sender_id FROM transfers WHERE transfer_id = ?1",
+            ["abcd"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(sender_id, "sender_id");
+
+    }
+    #[test]
+    fn test_successful_record(){
+        let store = TransferStore::new();
+        assert!(store.is_ok());
+        let store = store.unwrap();
+        assert!(store.record_sent_transfer("demo_id", "home/path/transfer").is_ok());
+        let path: String = store.conn.query_row(
+            "SELECT file_path FROM sent_transfers WHERE transfer_id = ?1",
+            ["demo_id"],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(path,"home/path/transfer");
 
     }
 }

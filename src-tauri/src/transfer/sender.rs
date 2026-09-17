@@ -1,20 +1,22 @@
-use std::{error::Error, io::SeekFrom, net::SocketAddr, path::Path};
+use std::{error::Error, io::SeekFrom, net::{SocketAddr}, path::Path, sync::Arc};
 
 use sha2::{Sha256,Digest};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::{io::{AsyncReadExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
-use crate::{protocol::frame::{MessageType, encode_frame}, transfer::{CHUNK_SIZE, Chunk, FileMetadata, TransferComplete,
-    TransferReject, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileMetadata, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
 
-pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Error>>{
+pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:Arc<TransferStore>)
+    ->Result<(),Box<dyn Error>>{
 
-    let transfer_id = Uuid::new_v4().to_string(); 
+    let transfer_id = Uuid::new_v4().to_string(); //sender is generating a new trasfer_id for every
+    //fn call
     let file_data = tokio::fs::metadata(file_path).await?;
     let filename = file_path.file_name()
                             .ok_or("invalid file path")?
                             .to_string_lossy().to_string();
     let transfer_req = TransferRequest {
         transfer_id:transfer_id.clone(),
+        sender_id,
         filename,
         file_size: file_data.len()
     };
@@ -24,7 +26,7 @@ pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Err
     
     let mut tcp_stream = connect_to_peer(addr).await?;
     send_frame(&mut tcp_stream, &frame).await?;
-    
+
     let mut buffer = Vec::new();
     let (response_type,response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 
@@ -36,6 +38,7 @@ pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Err
         },
         MessageType::TransferAccept => {
             // let file_bytes = tokio::fs::read(file_path).await?; //not supposed to do this
+            store.record_sent_transfer(&transfer_id, &file_path.to_string_lossy())?;
             let mut file_handle = tokio::fs::File::open(file_path).await?;
             let mut buf = vec![0u8;CHUNK_SIZE];
             let mut hasher = Sha256::new();
@@ -102,5 +105,38 @@ pub async fn send_file(addr:SocketAddr, file_path: &Path)->Result<(),Box<dyn Err
     }
 
     
+    Ok(())
+}
+
+
+
+
+pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>) -> Result<(), Box<dyn Error>> {
+    let listener = TcpListener::bind(addr).await?;
+    loop {
+        let (stream, _peer_addr) = listener.accept().await?;
+        if let Err(err) = handle_resume_request(stream, Arc::clone(&store)).await {
+            eprintln!("resume error: {err}");
+        }
+    }
+}
+
+async fn handle_resume_request(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->Result<(), Box<dyn Error>>{
+    let mut buffer = Vec::new();
+    let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+
+    match msg_type {
+        MessageType::ResumeRequest => {
+            let request: ResumeRequest = bincode::deserialize(&payload)?;
+            match store.get_sent_transfer_path(&request.transfer_id)? {
+                Some(file_path) => {},
+                None => return Err(format!("unknown transfer id /invalid request").into())
+            }
+            
+        },
+        _ => {
+            return Err(format!("transfer protocol violation").into())
+        }
+    }
     Ok(())
 }

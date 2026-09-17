@@ -15,6 +15,7 @@ pub enum MessageType {
     Chunk = 7,
     ChunkAck = 8,
     SyncUpdate = 9,
+    ResumeRequest = 10
 }
 impl MessageType {
     fn try_from(value:u8) -> Option<Self>{
@@ -29,6 +30,7 @@ impl MessageType {
             7 => Some(MessageType::Chunk),
             8 => Some(MessageType::ChunkAck),
             9 => Some(MessageType::SyncUpdate),
+            10 => Some(MessageType::ResumeRequest),
             _ => None
         }
 

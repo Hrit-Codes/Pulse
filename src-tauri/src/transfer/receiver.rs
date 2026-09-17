@@ -3,7 +3,7 @@ use std::{error::Error, io::SeekFrom, net::SocketAddr, sync::Arc};
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferRole, TransferStatus, TransferStore}, transfer::{CHUNK_SIZE,
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE,
     Chunk, FileMetadata, TransferAccept, TransferComplete, TransferRequest, stream::{read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
@@ -41,7 +41,7 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
 
                     store.create_transfer(&metadata.transfer_id, 
                         &metadata.file_hash, &request.filename, request.file_size, 
-                        metadata.total_chunks, metadata.chunk_size, TransferRole::Receiver)?;
+                        metadata.total_chunks, metadata.chunk_size, &request.sender_id)?;
                     
 
                     let chunk_dir = store.get_chunk_dir()?;

@@ -1,8 +1,8 @@
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::FromStr, sync::Arc};
 
 use clap::{Subcommand,Parser};
-use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover}, 
-    transfer::{receiver::receive_file, sender::send_file}};
+use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover},
+    storage::TransferStore, transfer::{receiver::receive_file, sender::send_file}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
 struct Cli{
@@ -19,10 +19,30 @@ enum Commands {
 #[tokio::main]
 async fn main(){
     let cli = Cli::parse();
+    let device_info;
+    let store:Arc<TransferStore>;
+    match TransferStore::new() {
+        Ok(s) => {
+            match s.get_or_create_identity() {
+                Ok((id,name)) => {
+                    device_info = DeviceInfo::new(id,name,9000);
+                },
+                Err(err) => {
+                    eprintln!("{}",err);
+                    return;
+                }
+            }
+            store = Arc::new(s);
+        },
+        Err(err) => {
+            eprintln!("{}",err);
+            return;
+        }
+    }
     let devices:Arc<Mutex<HashMap<String, (DeviceInfo,IpAddr)>>> = Arc::new(Mutex::new(HashMap::new()));
     match cli.command {
         Commands::Discover => {
-            if let Err(err) = broadcast_discover(Arc::clone(&devices)).await {
+            if let Err(err) = broadcast_discover(Arc::clone(&devices),device_info).await {
                 eprintln!("{}",err);
             }
         }
@@ -37,7 +57,7 @@ async fn main(){
             }; 
             let socket_addr = SocketAddr::new(ip_addr,9000);
             let path = Path::new(&file);
-            if let Err(err) = send_file(socket_addr, path).await {
+            if let Err(err) = send_file(device_info.id,socket_addr, path,Arc::clone(&store)).await {
                 eprintln!("error sending file: {}",err);
             }
         }
@@ -49,7 +69,7 @@ async fn main(){
             } 
         }
         Commands::ListenDiscover=>{ 
-            if let Err(err) = listen_for_discover(Arc::clone(&devices)).await {
+            if let Err(err) = listen_for_discover(Arc::clone(&devices),device_info).await {
                 eprintln!("error occurred {}", err);
             }
         }

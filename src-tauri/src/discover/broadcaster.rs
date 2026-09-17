@@ -2,14 +2,10 @@ use crate::{discover::{BROADCAST_ADDR, DeviceInfo, LOCAL_BIND_ADDR, PORT}, proto
 use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
 use tokio::{net::UdpSocket, sync::Mutex};
 
-pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>)->Result<(),Box<dyn Error>>{
-    let dummy_device = DeviceInfo {
-        id: String::from("1234"),
-        name: String::from("dummy device"),
-        port: 9000
-    };
+pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,my_device:DeviceInfo)
+    ->Result<(),Box<dyn Error>>{
 
-    let payload = bincode::serialize(&dummy_device)?;
+    let payload = bincode::serialize(&my_device)?;
 
     let frame = frame::encode_frame(frame::MessageType::Discover, &payload);
 
