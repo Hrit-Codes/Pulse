@@ -1,4 +1,4 @@
-use std::{error::Error, io::SeekFrom, net::{SocketAddr}, path::Path, sync::Arc};
+use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, path::Path, sync::Arc};
 
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
@@ -129,7 +129,36 @@ async fn handle_resume_request(mut tcp_stream:TcpStream,store:Arc<TransferStore>
         MessageType::ResumeRequest => {
             let request: ResumeRequest = bincode::deserialize(&payload)?;
             match store.get_sent_transfer_path(&request.transfer_id)? {
-                Some(file_path) => {},
+                Some(file_path) => {
+                    
+                    let (metadata_result, file_result) = tokio::join!(
+                        tokio::fs::metadata(&file_path),
+                        tokio::fs::File::open(&file_path),
+                    );
+
+                    let file_size = metadata_result?.len() as usize;
+                    let mut file_handle = file_result?;
+                    let total_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                    let mut buf = vec![0u8; CHUNK_SIZE];
+                    let received_set: HashSet<usize> = request.received_chunks.iter().copied().collect();
+                    for i in 0..total_chunks {
+                        if received_set.contains(&i){
+                            continue;
+                        }
+                        let offset = (i * CHUNK_SIZE) as u64;
+                        file_handle.seek(SeekFrom::Start(offset)).await?;
+                        let n = file_handle.read(&mut buf).await?;
+
+                        let chunk = Chunk {
+                            transfer_id: request.transfer_id.clone(),
+                            chunk_index: i,
+                            data: buf[..n].to_vec(),
+                        };
+                        let payload = bincode::serialize(&chunk)?;
+                        let frame = encode_frame(MessageType::Chunk, &payload);
+                        send_frame(&mut tcp_stream, &frame).await?;
+                    }
+                },
                 None => return Err(format!("unknown transfer id /invalid request").into())
             }
             

@@ -153,6 +153,16 @@ impl TransferStore {
         ", (status.as_str(),transfer_id))?;
         Ok(())
     }
+    pub fn get_in_progress_transfers(&self) -> Result<Vec<(String, String, String, i64)>, Box<dyn Error>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT transfer_id, sender_id, filename, file_size FROM transfers WHERE status = 'in_progress'"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
 }
 
 
@@ -222,5 +232,16 @@ mod transfer_store_tests{
         ).unwrap();
         assert_eq!(path,"home/path/transfer");
 
+    }
+    #[test]
+    fn test_transfer_list(){
+        let store = TransferStore::new();
+        assert!(store.is_ok());
+        let store = store.unwrap();
+        assert!(store.create_transfer("id", "filehash", "filename", 8, 4 ,3, "sender_id").is_ok());
+        let list = store.get_in_progress_transfers();
+        assert!(list.is_ok());
+        let list = list.unwrap();
+        assert_eq!(("id".to_string(),"sender_id".to_string(),"filename".to_string(),8),list[0]);
     }
 }

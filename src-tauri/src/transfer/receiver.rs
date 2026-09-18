@@ -1,10 +1,9 @@
-use std::{error::Error, io::SeekFrom, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, error::Error, io::SeekFrom, net::{IpAddr, SocketAddr}, sync::Arc};
 
 use sha2::{Sha256,Digest};
-use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
+use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
 
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE,
-    Chunk, FileMetadata, TransferAccept, TransferComplete, TransferRequest, stream::{read_frame, send_frame}}};
+use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
@@ -115,5 +114,35 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
         },
         _ => return Err(format!("transfer protocol violation").into())
     }
+    Ok(())
+}
+
+pub async fn resume_transfer(
+    transfer_id: String,
+    store: Arc<TransferStore>,
+    devices: Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>,
+) -> Result<(), Box<dyn Error>> {
+    let pending = store.get_in_progress_transfers()?;
+    let (_, sender_id, filename, file_size) = pending
+        .into_iter()
+        .find(|(id, _, _, _)| id == &transfer_id)
+        .ok_or("transfer not found")?;
+
+    let sender_addr;
+    {
+        let device_guard = devices.lock().await;
+        let (device_info,ip) = device_guard.get(&sender_id).ok_or("Device is not discoverable")?;
+        sender_addr = SocketAddr::new(*ip, device_info.port);
+    }
+    let received_chunks = store.get_received_chunks(&transfer_id)?;
+
+    let mut tcp_stream = connect_to_peer(sender_addr).await?;
+    let resume_req = ResumeRequest {
+        transfer_id: transfer_id.clone(),
+        received_chunks,
+    };
+    let payload = bincode::serialize(&resume_req)?;
+    let frame = encode_frame(MessageType::ResumeRequest, &payload);
+    send_frame(&mut tcp_stream, &frame).await?;
     Ok(())
 }
