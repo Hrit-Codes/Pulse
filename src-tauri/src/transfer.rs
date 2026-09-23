@@ -35,7 +35,6 @@ pub struct FileMetadata {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chunk {
-    pub transfer_id: String,
     pub chunk_index: usize,
     pub data: Vec<u8>,
 }
@@ -60,5 +59,5 @@ pub struct ResumeRequest {
 }
 
 #[derive(Serialize,Deserialize,Debug,Clone)]
-pub struct FileHash(String);
+pub struct FileHash(pub String);
 

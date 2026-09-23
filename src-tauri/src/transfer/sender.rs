@@ -68,7 +68,6 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
                 }
                 hasher.update(&buf[..n]);
                 let chunk = Chunk {
-                    transfer_id:transfer_id.clone(),
                     chunk_index,
                     data: buf[..n].to_vec()
                 };
@@ -153,7 +152,6 @@ async fn handle_resume_request(mut tcp_stream:TcpStream,store:Arc<TransferStore>
                         let n = file_handle.read(&mut buf).await?;
 
                         let chunk = Chunk {
-                            transfer_id: request.transfer_id.clone(),
                             chunk_index: i,
                             data: buf[..n].to_vec(),
                         };
