@@ -28,6 +28,7 @@ pub async fn read_frame(tcp_stream:&mut TcpStream,buffer:&mut Vec<u8>)->Result<(
         };
 
         let bytes_read = tcp_stream.read(&mut scratch).await?;
+        println!("{}",bytes_read);
         if bytes_read == 0 {
             return Err("connection closed before a full frame arrived".into());
         }

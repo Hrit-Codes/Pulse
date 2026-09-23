@@ -29,7 +29,7 @@ pub struct TransferReject {
 pub struct FileMetadata {
     pub transfer_id: String,
     pub chunk_size: usize,
-    pub file_hash: String,
+    // pub file_hash: String,
     pub total_chunks: usize,
 }
 
@@ -58,3 +58,7 @@ pub struct ResumeRequest {
     pub transfer_id: String,
     pub received_chunks: Vec<usize>,
 }
+
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub struct FileHash(String);
+

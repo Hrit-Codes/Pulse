@@ -3,7 +3,8 @@ use std::{collections::HashMap, error::Error, io::SeekFrom, net::{IpAddr, Socket
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
 
-use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
+use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
+    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
@@ -39,7 +40,7 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                     println!("file metadata {:?}",metadata);
 
                     store.create_transfer(&metadata.transfer_id, 
-                        &metadata.file_hash, &request.filename, request.file_size, 
+                        &request.filename, request.file_size, 
                         metadata.total_chunks, metadata.chunk_size, &request.sender_id)?;
                     
 
@@ -76,6 +77,14 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                         };
                         
                     }
+                    let (msg_type,payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+                    let file_hash:FileHash;
+                    match msg_type {
+                       MessageType::FileHash => {
+                            file_hash = bincode::deserialize(&payload)?;
+                        },
+                        _ => return Err(format!("transfer protocol violation").into())
+                    }
                     //buffer for reading bytes
                     let mut buf = vec![0u8; CHUNK_SIZE];  //stack buffer might be insufficient
                     file.flush().await?;
@@ -88,7 +97,7 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                         hasher.update(&buf[..n]);
                     }
                     let computed_hash = hex::encode(hasher.finalize());
-                    let success = computed_hash == metadata.file_hash;
+                    let success = computed_hash == file_hash.0;
                     
                     if success {
                         let download_dir = dirs::download_dir()

@@ -39,7 +39,7 @@ impl TransferStore {
         conn.execute_batch("
             CREATE TABLE IF NOT EXISTS transfers (
                 transfer_id  TEXT PRIMARY KEY,
-                file_hash    TEXT NOT NULL,
+                file_hash    TEXT DEFAULT NULL,
                 filename     TEXT NOT NULL,
                 file_size    INTEGER NOT NULL,
                 total_chunks INTEGER NOT NULL DEFAULT 0,
@@ -120,13 +120,13 @@ impl TransferStore {
         }
     }
 
-    pub fn create_transfer(&self, transfer_id: &str, file_hash: &str, filename: &str, file_size: u64,
+    pub fn create_transfer(&self, transfer_id: &str, filename: &str, file_size: u64,
         total_chunks: usize, chunk_size: usize, sender_id: &str) -> Result<(), Box<dyn Error>>{
         self.conn.execute("
-            INSERT INTO transfers (transfer_id,file_hash,filename,file_size,total_chunks,chunk_size,sender_id) VALUES 
-            (?1,?2,?3,?4,?5,?6,?7)
+            INSERT INTO transfers (transfer_id,filename,file_size,total_chunks,chunk_size,sender_id) VALUES 
+            (?1,?2,?3,?4,?5,?6)
         ",
-        (transfer_id,file_hash,filename,file_size as i64,total_chunks as i64,chunk_size as i64,sender_id))?;
+        (transfer_id,filename,file_size as i64,total_chunks as i64,chunk_size as i64,sender_id))?;
         Ok(())
     }
     pub fn mark_chunk_received(&self, transfer_id: &str,chunk_index: usize)->Result<(),Box<dyn Error>>{
@@ -188,7 +188,7 @@ mod transfer_store_tests{
         let store = TransferStore::new();
         assert!(store.is_ok());
         let store = store.unwrap();
-        assert!(store.create_transfer("abcd", "hash123", "demo.dat", 67, 32, 10, "sender_id").is_ok());
+        assert!(store.create_transfer("abcd", "demo.dat", 67, 32, 10, "sender_id").is_ok());
         let (r1,r2,r3) = (
             store.mark_chunk_received("abcd", 0),
             store.mark_chunk_received("abcd",2),
@@ -238,7 +238,7 @@ mod transfer_store_tests{
         let store = TransferStore::new();
         assert!(store.is_ok());
         let store = store.unwrap();
-        assert!(store.create_transfer("id", "filehash", "filename", 8, 4 ,3, "sender_id").is_ok());
+        assert!(store.create_transfer("id", "filename", 8, 4 ,3, "sender_id").is_ok());
         let list = store.get_in_progress_transfers();
         assert!(list.is_ok());
         let list = list.unwrap();

@@ -3,7 +3,9 @@ use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, pat
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileMetadata, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileHash,
+    FileMetadata, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame,
+        send_frame}}};
 
 pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:Arc<TransferStore>)
     ->Result<(),Box<dyn Error>>{
@@ -39,25 +41,11 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
         MessageType::TransferAccept => {
             // let file_bytes = tokio::fs::read(file_path).await?; //not supposed to do this
             store.record_sent_transfer(&transfer_id, &file_path.to_string_lossy())?;
-            let mut file_handle = tokio::fs::File::open(file_path).await?;
-            let mut buf = vec![0u8;CHUNK_SIZE];
-            let mut hasher = Sha256::new();
-
-            loop{ //first read
-                let n = file_handle.read(&mut buf).await?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]);
-            }
-            let hash_bytes = hasher.finalize();
-            let file_hash = hex::encode(hash_bytes);
-
-            file_handle.seek(SeekFrom::Start(0)).await?;
+                        
             let file_size = file_data.len() as usize;
             let file_metadata = FileMetadata {
                 transfer_id:transfer_id.clone(),
-                file_hash:file_hash.clone(),
+                // file_hash:file_hash.clone(),
                 chunk_size:CHUNK_SIZE,
                 total_chunks:(file_size+CHUNK_SIZE-1)/CHUNK_SIZE
             };
@@ -66,12 +54,19 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
 
             send_frame(&mut tcp_stream, &frame).await?; //file metadata has been sent
             
+            let mut file_handle = tokio::fs::File::open(file_path).await?;
+            file_handle.seek(SeekFrom::Start(0)).await?;
+
+            let mut buf = vec![0u8;CHUNK_SIZE];
+            let mut hasher = Sha256::new();
             let mut chunk_index = 0;
-            loop{ //second read
+
+            loop{ //file read
                 let n = file_handle.read(&mut buf).await?;
                 if n == 0 {
                     break;
                 }
+                hasher.update(&buf[..n]);
                 let chunk = Chunk {
                     transfer_id:transfer_id.clone(),
                     chunk_index,
@@ -82,12 +77,20 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
                 send_frame(&mut tcp_stream, &frame).await?;
                 chunk_index+=1;
             }
+            
+            let hash_bytes = hasher.finalize();
+            let file_hash = hex::encode(hash_bytes);
+
+            let file_hash = FileHash(file_hash);
+            let payload = bincode::serialize(&file_hash)?;
+            let frame = encode_frame(MessageType::FileHash, &payload);
+            send_frame(&mut tcp_stream, &frame).await?;  //sent the file hash after all the chunks
 
             let (response_type, response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
             match response_type {
                 MessageType::TransferComplete => {
                     let complete:TransferComplete = bincode::deserialize(&response_payload)?;
-                    if complete.success && complete.receiver_hash == file_hash {
+                    if complete.success && complete.receiver_hash == file_hash.0 {
                         println!("Transfer verified successfully");
                     } else {
                         eprintln!("Transfer failed or hash mismatch");
