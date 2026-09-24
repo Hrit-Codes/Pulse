@@ -129,11 +129,32 @@ impl TransferStore {
         (transfer_id,filename,file_size as i64,total_chunks as i64,chunk_size as i64,sender_id))?;
         Ok(())
     }
-    pub fn mark_chunk_received(&self, transfer_id: &str,chunk_index: usize)->Result<(),Box<dyn Error>>{
-        self.conn.execute("
-            INSERT OR IGNORE INTO chunks (transfer_id,chunk_index) VALUES (?1,?2)
-        ", (transfer_id,chunk_index as i64))?;
-        Ok(())
+    pub fn mark_chunks_received(&self,transfer_id: &str,chunk_indices: &[usize]) -> Result<(), Box<dyn Error>> {
+        if chunk_indices.is_empty() {
+            return Ok(());
+        }
+
+        let placeholders = std::iter::repeat("(?, ?)")
+            .take(chunk_indices.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "INSERT OR IGNORE INTO chunks (transfer_id, chunk_index)
+            VALUES {}",
+            placeholders
+        );
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(chunk_indices.len() * 2);
+
+        for &index in chunk_indices {
+            params.push(Box::new(transfer_id));
+            params.push(Box::new(index as i64));
+        }
+        tx.execute(&sql, rusqlite::params_from_iter(params.iter()))?;
+        tx.commit()?;
+    Ok(())
     }
 
     pub fn get_received_chunks(&self, transfer_id: &str) -> Result<Vec<usize>, Box<dyn Error>> {

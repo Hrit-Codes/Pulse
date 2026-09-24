@@ -1,5 +1,6 @@
 use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, path::Path, sync::Arc};
 
+use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
@@ -29,7 +30,7 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
     let mut tcp_stream = connect_to_peer(addr).await?;
     send_frame(&mut tcp_stream, &frame).await?;
 
-    let mut buffer = Vec::new();
+    let mut buffer = BytesMut::new();
     let (response_type,response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 
     match response_type {
@@ -74,6 +75,13 @@ pub async fn send_file(sender_id:String,addr:SocketAddr, file_path: &Path,store:
                 let payload = bincode::serialize(&chunk)?;
                 let frame = encode_frame(MessageType::Chunk, &payload);
                 send_frame(&mut tcp_stream, &frame).await?;
+                // --- replacement: zero-alloc direct write ---
+                // let payload_len = (8 + n) as u32;
+                // tcp_stream.write_all(&payload_len.to_be_bytes()).await?;
+                // tcp_stream.write_all(&[MessageType::Chunk as u8]).await?;
+                // tcp_stream.write_all(&chunk_index.to_le_bytes()).await?;
+                // tcp_stream.write_all(&buf[..n]).await?;
+                // --- end replacement ---
                 chunk_index+=1;
             }
             
@@ -124,7 +132,7 @@ pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>) ->
 }
 
 async fn handle_resume_request(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->Result<(), Box<dyn Error>>{
-    let mut buffer = Vec::new();
+    let mut buffer = BytesMut::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 
     match msg_type {

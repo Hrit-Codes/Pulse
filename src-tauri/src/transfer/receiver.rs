@@ -1,10 +1,13 @@
 use std::{collections::HashMap, error::Error, io::SeekFrom, net::{IpAddr, SocketAddr}, sync::Arc};
 
+use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
 
 use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
-    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
+    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash,
+        FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest,
+        stream::{connect_to_peer, read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
@@ -19,7 +22,7 @@ pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
 
 async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->Result<(), Box<dyn Error>>{ 
     //might require Arc<Mutex<>> later for concurrent transfers
-    let mut buffer = Vec::new();
+    let mut buffer = BytesMut::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
     match msg_type {
         MessageType::TransferRequest => {
@@ -57,18 +60,50 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                     file.set_len(request.file_size).await?;
 
                     // let mut chunks:Vec<Option<Vec<u8>>> = vec![None;metadata.total_chunks];
+                    let mut pending_chunks = Vec::with_capacity(32);
                     let mut received_count = 0;
                     loop {
-                        let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+                        let result = read_frame(&mut tcp_stream, &mut buffer).await;
+                        let msg_type;
+                        let payload;
+                        match result {
+                            Ok((msg,pay)) => {
+                                msg_type = msg;
+                                payload = pay;
+                            }
+                            Err(e) => {
+                                if !pending_chunks.is_empty() {
+                                    store.mark_chunks_received(&metadata.transfer_id,&pending_chunks)?;
+                                    pending_chunks.clear();
+                                }
+                                return Err(e)
+                            }
+                        }
+                            
                         match msg_type {
                             MessageType::Chunk => {
                                 let chunk:Chunk = bincode::deserialize(&payload)?;
                                 let offset = (chunk.chunk_index*metadata.chunk_size) as u64;
                                 file.seek(SeekFrom::Start(offset)).await?;
                                 file.write_all(&chunk.data).await?;
-                                store.mark_chunk_received(&metadata.transfer_id, chunk.chunk_index)?;
-                                // chunks[chunk.chunk_index] = Some(chunk.data);
+
+                                pending_chunks.push(chunk.chunk_index);
+                                // --- replacement: zero-alloc chunk parsing ---
+                                // let chunk_index = usize::from_le_bytes(payload[..8].try_into().unwrap());
+                                // let data = &payload[8..];
+                                // let offset = (chunk_index * metadata.chunk_size) as u64;
+                                // file.seek(SeekFrom::Start(offset)).await?;
+                                // file.write_all(data).await?;
+                                //
+                                // pending_chunks.push(chunk_index);
+                                // --- end replacement ---
                                 received_count+=1;
+
+                                if pending_chunks.len() == 32 {
+                                    store.mark_chunks_received(&metadata.transfer_id, &pending_chunks)?;
+                                    pending_chunks.clear();
+                                }
+
                                 if received_count == metadata.total_chunks {
                                     break;
                                 }
@@ -76,6 +111,10 @@ async fn handle_connection(mut tcp_stream:TcpStream,store:Arc<TransferStore>)->R
                             _ => return Err(format!("transfer protocol violation").into())
                         };
                         
+                    }
+                    if !pending_chunks.is_empty() {
+                        store.mark_chunks_received(&metadata.transfer_id,&pending_chunks)?;
+                        pending_chunks.clear();
                     }
                     let (msg_type,payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
                     let file_hash:FileHash;

@@ -2903,6 +2903,7 @@ name = "pulse"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bytes",
  "clap",
  "dirs 7.0.0",
  "hex",

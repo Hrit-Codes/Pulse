@@ -35,3 +35,4 @@ hex = "0.4.3"
 #database
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 dirs = "7"
+bytes = "1.12.1"
