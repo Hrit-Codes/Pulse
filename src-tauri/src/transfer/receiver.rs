@@ -171,7 +171,7 @@ pub async fn resume_transfer(
     devices: Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>,
 ) -> Result<(), Box<dyn Error>> {
     let pending = store.get_in_progress_transfers()?;
-    let (_, sender_id, filename, file_size) = pending
+    let (_, sender_id, _filename, _file_size) = pending
         .into_iter()
         .find(|(id, _, _, _)| id == &transfer_id)
         .ok_or("transfer not found")?;

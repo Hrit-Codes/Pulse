@@ -210,14 +210,8 @@ mod transfer_store_tests{
         assert!(store.is_ok());
         let store = store.unwrap();
         assert!(store.create_transfer("abcd", "demo.dat", 67, 32, 10, "sender_id").is_ok());
-        let (r1,r2,r3) = (
-            store.mark_chunk_received("abcd", 0),
-            store.mark_chunk_received("abcd",2),
-            store.mark_chunk_received("abcd", 4)
-        );
+        let r1 = store.mark_chunks_received("abcd", &[0,2,4]);
         assert!(r1.is_ok());
-        assert!(r2.is_ok());
-        assert!(r3.is_ok());
 
         let chunks = store.get_received_chunks("abcd");
         assert!(chunks.is_ok());
