@@ -87,7 +87,7 @@ async fn main(){
                 (DeviceInfo::new("b72d466e-7d6b-4c70-97f0-6eb50e9a6f23".to_string(),
                     "Rochak's Macbook".to_string(), 9000),IpAddr::from_str("127.0.0.1").unwrap()));
             let devices = Arc::new(Mutex::new(devices));
-            if let Err(err) = resume_transfer("f45d54db-ebbe-4837-a38a-d844aff1e43d".to_string(), Arc::clone(&store),
+            if let Err(err) = resume_transfer("66fbe046-a711-4190-bbe3-0890609b9a4e".to_string(), Arc::clone(&store),
                 Arc::clone(&devices)).await {
                 eprintln!("error occurred {}",err);
             }
