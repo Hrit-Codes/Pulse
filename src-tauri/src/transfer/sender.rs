@@ -2,7 +2,7 @@ use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, pat
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
-use tokio::{io::{AsyncReadExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
+use tokio::{io::{AsyncReadExt,AsyncWriteExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
 use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileHash,
     FileMetadata, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame,
@@ -166,7 +166,40 @@ async fn handle_resume_request(mut tcp_stream:TcpStream,store:Arc<TransferStore>
                         let payload = bincode::serialize(&chunk)?;
                         let frame = encode_frame(MessageType::Chunk, &payload);
                         send_frame(&mut tcp_stream, &frame).await?;
+
+
                     }
+                    file_handle.flush().await?;
+                    file_handle.seek(SeekFrom::Start(0)).await?;
+
+                    let mut hasher = Sha256::new();
+                    loop{
+                        let n = file_handle.read(&mut buf).await?;
+                        if n == 0 {break;}
+                        hasher.update(&buf[..n]);
+                    }
+                    
+                    let file_hash = FileHash(hex::encode(hasher.finalize()));
+                    let payload = bincode::serialize(&file_hash)?;
+                    let frame = encode_frame(MessageType::FileHash, &payload);
+                    send_frame(&mut tcp_stream, &frame).await?;  //sent the file hash after all the chunks
+
+                    let (response_type, response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+
+                    match response_type {
+                        MessageType::TransferComplete => {
+                            let complete:TransferComplete = bincode::deserialize(&response_payload)?;
+                            if complete.success && complete.receiver_hash == file_hash.0 {
+                                println!("Transfer verified successfully");
+                            } else {
+                            eprintln!("Transfer failed or hash mismatch");
+                            }
+                        },
+                        _ => {
+                            eprintln!("unexpected response: {:?}", response_type);
+                        }
+                    };
+
                 },
                 None => return Err(format!("unknown transfer id /invalid request").into())
             }

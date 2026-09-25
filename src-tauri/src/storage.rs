@@ -129,6 +129,7 @@ impl TransferStore {
         (transfer_id,filename,file_size as i64,total_chunks as i64,chunk_size as i64,sender_id))?;
         Ok(())
     }
+
     pub fn mark_chunks_received(&self,transfer_id: &str,chunk_indices: &[usize]) -> Result<(), Box<dyn Error>> {
         if chunk_indices.is_empty() {
             return Ok(());
@@ -174,12 +175,12 @@ impl TransferStore {
         ", (status.as_str(),transfer_id))?;
         Ok(())
     }
-    pub fn get_in_progress_transfers(&self) -> Result<Vec<(String, String, String, i64)>, Box<dyn Error>> {
+    pub fn get_in_progress_transfers(&self) -> Result<Vec<(String, String, String, i64,i64)>, Box<dyn Error>> {
         let mut stmt = self.conn.prepare(
-            "SELECT transfer_id, sender_id, filename, file_size FROM transfers WHERE status = 'in_progress'"
+            "SELECT transfer_id, sender_id, filename, file_size,total_chunks FROM transfers WHERE status = 'in_progress'"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         })?
         .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(rows)
