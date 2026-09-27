@@ -31,7 +31,7 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                     }
                 };
                 {
-                    println!("{:?}",data);
+                    println!("{:?},{}",data,sender_addr);
                     let mut devices = devices.lock().await;
                     devices.insert(data.id.clone(), (data,sender_addr.ip()));
                 }

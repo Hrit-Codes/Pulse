@@ -4,9 +4,8 @@ use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt,AsyncWriteExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileHash,
-    FileMetadata, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame,
-        send_frame}}};
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame,
+        send_frame}}, util::{check_equal, generate_pin}};
 
 async fn send_chunk(
     tcp_stream: &mut TcpStream,
@@ -48,9 +47,38 @@ async fn send_file_hash_and_await_completion(
     Ok(())
 }
 
-pub async fn send_file(
+pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: &Path,store: Arc<TransferStore>)->
+Result<(),Box<dyn Error>>{
+    let mut tcp_stream = connect_to_peer(addr).await?;
+    //authorization
+    let pin = generate_pin();
+    println!("Generated pin: {}",pin);
+    let mut buffer = BytesMut::new();
+    let (response_type,payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+    match response_type {
+        MessageType::RequestPin => {
+            let new_pin:RequestPin = bincode::deserialize(&payload)?;
+            if !check_equal(pin, new_pin.0){
+                let transfer_reject = TransferReject{
+                    reason:"file transfer rejected: incorrect pin".to_string()
+                };
+                let payload = bincode::serialize(&transfer_reject)?;
+                let frame = encode_frame(MessageType::TransferReject, &payload);
+                send_frame(&mut tcp_stream, &frame).await?;
+                return Err(transfer_reject.reason.into())
+            }
+        },
+        _ => return Err("transfer protocol violation".into())
+    }
+    
+    //authorization successful
+    send_file(&mut tcp_stream,buffer, sender_id, file_path, store).await
+}
+
+async fn send_file(
+    mut tcp_stream: &mut TcpStream,
+    mut buffer: BytesMut,
     sender_id: String,
-    addr: SocketAddr,
     file_path: &Path,
     store: Arc<TransferStore>,
 ) -> Result<(), Box<dyn Error>> {
@@ -72,10 +100,9 @@ pub async fn send_file(
     let payload = bincode::serialize(&transfer_req)?;
     let frame = encode_frame(MessageType::TransferRequest, &payload);
 
-    let mut tcp_stream = connect_to_peer(addr).await?;
+    // let mut tcp_stream = connect_to_peer(addr).await?;
     send_frame(&mut tcp_stream, &frame).await?;
 
-    let mut buffer = BytesMut::new();
     let (response_type, response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 
     match response_type {

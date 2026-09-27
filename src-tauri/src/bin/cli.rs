@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::From
 
 use clap::{Subcommand,Parser};
 use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover},
-    storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{run_resume_listener, send_file}}};
+    storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, run_resume_listener}}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
 struct Cli{
@@ -16,7 +16,8 @@ enum Commands {
     Receive { #[arg(short, long, default_value = "9000")] port: u16 },
     ListenDiscover,
     Resend,
-    Resume
+    Resume,
+    Run
 }
 #[tokio::main]
 async fn main(){
@@ -59,7 +60,7 @@ async fn main(){
             }; 
             let socket_addr = SocketAddr::new(ip_addr,9000);
             let path = Path::new(&file);
-            if let Err(err) = send_file(device_info.id,socket_addr, path,Arc::clone(&store)).await {
+            if let Err(err) = request_to_send_file(device_info.id,socket_addr, path,Arc::clone(&store)).await {
                 eprintln!("error sending file: {}",err);
             }
         }
@@ -91,6 +92,9 @@ async fn main(){
                 Arc::clone(&devices)).await {
                 eprintln!("error occurred {}",err);
             }
+        }
+        Commands::Run => {
+            println!("peer starting as: {} {}",device_info.name,device_info.id);
         }
     }
 }

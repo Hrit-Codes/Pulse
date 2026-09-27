@@ -1,13 +1,11 @@
-use std::{collections::HashMap, error::Error, io::SeekFrom, net::{IpAddr, SocketAddr}, sync::Arc};
+use std::{collections::HashMap, error::Error, io::{self, SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
 
 use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
-    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash,
-        FileMetadata, ResumeRequest, TransferAccept, TransferComplete, TransferRequest,
-        stream::{connect_to_peer, read_frame, send_frame}}};
+    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin, ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
 
 pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
@@ -122,9 +120,22 @@ async fn receive_chunks_and_finalize(
 
 async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>) -> Result<(), Box<dyn Error>> {
     //might require Arc<Mutex<>> later for concurrent transfers
+
+    let mut input = String::new();
+    println!("Enter the pin");
+    io::stdin().read_line(&mut input).expect("Error taking input");
+    let input = input.trim().to_string();
+    let pin:RequestPin = RequestPin(input);
+    let payload = bincode::serialize(&pin)?;
+    let frame = encode_frame(MessageType::RequestPin, &payload);
+    send_frame(&mut tcp_stream, &frame).await?;
     let mut buffer = BytesMut::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
     match msg_type {
+        MessageType::TransferReject => {
+            let reject:TransferReject = bincode::deserialize(&payload)?;
+            return Err(reject.reason.into())
+        },
         MessageType::TransferRequest => {
             let request: TransferRequest = bincode::deserialize(&payload)?;
             println!("Incoming transfer: {} ({} bytes)", request.filename, request.file_size);

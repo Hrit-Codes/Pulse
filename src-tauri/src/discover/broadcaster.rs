@@ -29,7 +29,7 @@ pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpA
             if let MessageType::DiscoverResponse = msg_type {
                 match bincode::deserialize::<DeviceInfo>(&payload) {
                     Ok(data) => {
-                        println!("{:?}",data);
+                        println!("{:?} {}",data,responder_addr);
                         let mut devices = devices.lock().await;
                         devices.insert(data.id.clone(), (data, responder_addr.ip()));
                     },

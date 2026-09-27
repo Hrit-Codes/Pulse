@@ -21,7 +21,6 @@ pub struct TransferAccept {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransferReject {
-    pub transfer_id: String,
     pub reason: String,
 }
 
@@ -61,3 +60,5 @@ pub struct ResumeRequest {
 #[derive(Serialize,Deserialize,Debug,Clone)]
 pub struct FileHash(pub String);
 
+#[derive(Serialize,Deserialize,Debug,Clone)]
+pub struct RequestPin(pub String);
