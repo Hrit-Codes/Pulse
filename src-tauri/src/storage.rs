@@ -258,6 +258,6 @@ mod transfer_store_tests{
         let list = store.get_in_progress_transfers();
         assert!(list.is_ok());
         let list = list.unwrap();
-        assert_eq!(("id".to_string(),"sender_id".to_string(),"filename".to_string(),8),list[0]);
+        assert_eq!(("id".to_string(),"sender_id".to_string(),"filename".to_string(),8,6),list[0]);
     }
 }
