@@ -8,14 +8,14 @@ use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, 
 use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
     storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin,
         ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest,
-        stream::{connect_to_peer, read_frame, send_frame}}, util::emit_error};
+        stream::{connect_to_peer, read_frame, send_frame}}, util::{emit_error, emit_message}};
 
 pub async fn receive_file(addr:SocketAddr,app:Option<&AppHandle>)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
     let store = Arc::new(TransferStore::new()?);
     loop {
         let (stream,_peer_addr) = listener.accept().await?;
-        if let Err(err) = handle_connection(stream,Arc::clone(&store)).await {
+        if let Err(err) = handle_connection(stream,Arc::clone(&store),app).await {
             emit_error(app, err.to_string()).await;
         }
     }
@@ -34,6 +34,7 @@ async fn receive_chunks_and_finalize(
     mut received_count: usize,
     file: &mut tokio::fs::File,
     output_path: &std::path::Path,
+    app:Option<&AppHandle>
 ) -> Result<(), Box<dyn Error>> {
     let mut pending_chunks = Vec::with_capacity(PENDING_CHUNKS);
 
@@ -117,11 +118,12 @@ async fn receive_chunks_and_finalize(
     let payload = bincode::serialize(&complete)?;
     let frame = encode_frame(MessageType::TransferComplete, &payload);
     send_frame(tcp_stream, &frame).await?;
-
+    emit_message(app, "transfer_complete","File is successfully received".to_string()).await;
     Ok(())
 }
 
-async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>) -> Result<(), Box<dyn Error>> {
+async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>)
+    -> Result<(), Box<dyn Error>> {
     //might require Arc<Mutex<>> later for concurrent transfers
 
     let mut input = String::new();
@@ -179,6 +181,7 @@ async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>)
                         0,
                         &mut file,
                         &output_path,
+                        app
                     )
                     .await?;
                 }
@@ -194,6 +197,7 @@ pub async fn resume_transfer(
     transfer_id: String,
     store: Arc<TransferStore>,
     devices: Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>,
+    app:Option<&AppHandle>
 ) -> Result<(), Box<dyn Error>> {
     let pending = store.get_in_progress_transfers()?;
     let (_, sender_id, filename, _file_size, total_chunks) = pending
@@ -242,6 +246,7 @@ pub async fn resume_transfer(
         received_count,
         &mut file,
         &output_path,
+        app
     )
     .await?;
 

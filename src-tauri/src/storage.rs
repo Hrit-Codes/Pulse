@@ -1,5 +1,7 @@
-use std::{error::Error, path::PathBuf};
+use std::{error::Error, path::PathBuf, sync::Arc};
 use uuid::Uuid;
+
+use crate::util::generate_pin;
 
 fn get_data_dir()->Result<PathBuf,Box<dyn Error>>{
     let base_path =  dirs::data_dir().ok_or("Could not resolve base directory")?; //converting none
@@ -79,8 +81,8 @@ impl TransferStore {
             Ok((id, name)) => Ok((id, name)),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 let id = Uuid::new_v4().to_string();
-                let name = "Rochak's Macbook".to_string();
-
+                let name = generate_pin();
+                let name = String::from("User")+&name;
                 self.conn.execute(
                     "INSERT INTO device_identity (id, name) VALUES (?1, ?2)",
                     (&id, &name),
@@ -185,8 +187,19 @@ impl TransferStore {
         .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(rows)
     }
+
+    pub fn update_device_name(&self,name:&str)->Result<(),Box<dyn Error>>{
+        self.conn.execute("
+            UPDATE device_identity SET name = ?
+        ", (name,))?;
+        Ok(())
+    }
 }
 
+pub fn change_name(store:Arc<TransferStore>,name:&str)->Result<(),Box<dyn Error>>{
+    store.update_device_name(name)?;
+    Ok(())
+}
 
 #[cfg(test)]
 mod transfer_store_tests{

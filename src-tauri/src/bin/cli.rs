@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::From
 
 use clap::{Subcommand,Parser};
 use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
-    storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, 
+    storage::{TransferStore, change_name}, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, 
         run_resume_listener}}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
@@ -18,7 +18,8 @@ enum Commands {
     ListenDiscover,
     Resend,
     Resume,
-    Run
+    Run,
+    ChangeName
 }
 #[tokio::main]
 async fn main(){
@@ -62,7 +63,7 @@ async fn main(){
             }; 
             let socket_addr = SocketAddr::new(ip_addr,9000);
             let path = Path::new(&file);
-            if let Err(err) = request_to_send_file(device_info.id,socket_addr, path,Arc::clone(&store)).await {
+            if let Err(err) = request_to_send_file(device_info.id,socket_addr, path,Arc::clone(&store),None).await {
                 eprintln!("error sending file: {}",err);
             }
         }
@@ -86,17 +87,23 @@ async fn main(){
         }
         Commands::Resume => {
             let mut devices:HashMap<String, (DeviceInfo,IpAddr)>= HashMap::new(); 
-            devices.insert("b72d466e-7d6b-4c70-97f0-6eb50e9a6f23".to_string(), 
-                (DeviceInfo::new("b72d466e-7d6b-4c70-97f0-6eb50e9a6f23".to_string(),
-                    "Rochak's Macbook".to_string(), 9000),IpAddr::from_str("127.0.0.1").unwrap()));
+            devices.insert("76e326b3-c74b-442c-b477-7e0a43d7f5d3".to_string(), 
+                (DeviceInfo::new("76e326b3-c74b-442c-b477-7e0a43d7f5d3".to_string(),
+                    "User2432".to_string(), 9000),IpAddr::from_str("127.0.0.1").unwrap()));
             let devices = Arc::new(Mutex::new(devices));
-            if let Err(err) = resume_transfer("66fbe046-a711-4190-bbe3-0890609b9a4e".to_string(), Arc::clone(&store),
-                Arc::clone(&devices)).await {
+            if let Err(err) = resume_transfer("0e069818-6921-40ef-967b-ec66c8027ecc".to_string(), Arc::clone(&store),
+                Arc::clone(&devices),None).await {
                 eprintln!("error occurred {}",err);
             }
         }
         Commands::Run => {
             println!("peer starting as: {} {}",device_info.name,device_info.id);
+        }
+        Commands::ChangeName => {
+            if let Err(err) = change_name(Arc::clone(&store), "Rochak's Macbook") {
+                eprintln!("error changing name: {}",err);
+            }
+
         }
     }
 }

@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk,
     FileHash, FileMetadata, RequestPin, ResumeRequest, TransferComplete, TransferReject, TransferRequest,
     stream::{connect_to_peer, read_frame,
-        send_frame}}, util::{check_equal, emit_error, generate_pin}};
+        send_frame}}, util::{check_equal, emit_error, emit_message, generate_pin}};
 
 async fn send_chunk(
     tcp_stream: &mut TcpStream,
@@ -28,6 +28,7 @@ async fn send_file_hash_and_await_completion(
     tcp_stream: &mut TcpStream,
     buffer: &mut BytesMut,
     file_hash: FileHash,
+    app:Option<&AppHandle>
 ) -> Result<(), Box<dyn Error>> {
     let payload = bincode::serialize(&file_hash)?;
     let frame = encode_frame(MessageType::FileHash, &payload);
@@ -38,7 +39,7 @@ async fn send_file_hash_and_await_completion(
         MessageType::TransferComplete => {
             let complete: TransferComplete = bincode::deserialize(&response_payload)?;
             if complete.success && complete.receiver_hash == file_hash.0 {
-                println!("Transfer verified successfully");
+                emit_message(app, "transfer_complete", "transfer verified successfully".to_string()).await;
             } else {
                 return Err("Transfer failed or hash mismatch".into())
             }
@@ -50,12 +51,13 @@ async fn send_file_hash_and_await_completion(
     Ok(())
 }
 
-pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: &Path,store: Arc<TransferStore>)->
-Result<(),Box<dyn Error>>{
+pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: &Path,store: Arc<TransferStore>,
+    app:Option<&AppHandle>)->
+    Result<(),Box<dyn Error>>{
     let mut tcp_stream = connect_to_peer(addr).await?;
     //authorization
     let pin = generate_pin();
-    println!("Generated pin: {}",pin);
+    emit_message(app, "pin", pin.clone()).await;
     let mut buffer = BytesMut::new();
     let (response_type,payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
     match response_type {
@@ -75,7 +77,7 @@ Result<(),Box<dyn Error>>{
     }
     
     //authorization successful
-    send_file(&mut tcp_stream,buffer, sender_id, file_path, store).await
+    send_file(&mut tcp_stream,buffer, sender_id, file_path, store,app).await
 }
 
 async fn send_file(
@@ -84,6 +86,7 @@ async fn send_file(
     sender_id: String,
     file_path: &Path,
     store: Arc<TransferStore>,
+    app: Option<&AppHandle>
 ) -> Result<(), Box<dyn Error>> {
     let transfer_id = Uuid::new_v4().to_string(); //sender is generating a new trasfer_id for every
     //fn call
@@ -157,7 +160,7 @@ async fn send_file(
             let hash_bytes = hasher.finalize();
             let file_hash = FileHash(hex::encode(hash_bytes));
 
-            send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash).await?;
+            send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash,app).await?;
         }
         _ => {
             return Err(format!("unexpected response: {:?}", response_type).into())
@@ -172,13 +175,14 @@ pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>,
     let listener = TcpListener::bind(addr).await?;
     loop {
         let (stream, _peer_addr) = listener.accept().await?;
-        if let Err(err) = handle_resume_request(stream, Arc::clone(&store)).await {
+        if let Err(err) = handle_resume_request(stream, Arc::clone(&store),app).await {
             emit_error(app, err.to_string()).await;
         }
     }
 }
 
-async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferStore>) -> Result<(), Box<dyn Error>> {
+async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>
+    ) -> Result<(), Box<dyn Error>> {
     let mut buffer = BytesMut::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 
@@ -221,7 +225,7 @@ async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferSto
 
                     let file_hash = FileHash(hex::encode(hasher.finalize()));
 
-                    send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash).await?;
+                    send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash,app).await?;
                 }
                 None => return Err("unknown transfer id /invalid request".into()),
             }
