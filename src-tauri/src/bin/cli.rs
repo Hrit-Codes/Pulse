@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::FromStr, sync::Arc};
 
 use clap::{Subcommand,Parser};
-use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, listener::listen_for_discover},
+use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
     storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, run_resume_listener}}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
@@ -45,9 +45,10 @@ async fn main(){
     let devices:Arc<Mutex<HashMap<String, (DeviceInfo,IpAddr)>>> = Arc::new(Mutex::new(HashMap::new()));
     match cli.command {
         Commands::Discover => {
-            if let Err(err) = broadcast_discover(Arc::clone(&devices),device_info).await {
+            if let Err(err) = broadcast_discover(Arc::clone(&devices),device_info,None).await {
                 eprintln!("{}",err);
             }
+            println!("{:?}",get_devices(Arc::clone(&devices)).await);
         }
 
         Commands::Send{ip,file} => {
@@ -72,7 +73,7 @@ async fn main(){
             } 
         }
         Commands::ListenDiscover=>{ 
-            if let Err(err) = listen_for_discover(Arc::clone(&devices),device_info).await {
+            if let Err(err) = listen_for_discover(Arc::clone(&devices),device_info,None).await {
                 eprintln!("error occurred {}", err);
             }
         }

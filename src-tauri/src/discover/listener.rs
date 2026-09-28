@@ -1,9 +1,10 @@
+use tauri::AppHandle;
 use tokio::{net::UdpSocket, sync::Mutex};
 use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
-use crate::{discover::{DeviceInfo, PORT}, protocol::frame::{MessageType, decode_frame, encode_frame}};
+use crate::{discover::{DeviceInfo, PORT, add_device}, protocol::frame::{MessageType, decode_frame, encode_frame}};
 
 pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,
-    my_device:DeviceInfo)->Result<(), Box<dyn Error>>{
+    my_device:DeviceInfo,app:Option<&AppHandle>)->Result<(), Box<dyn Error>>{
     let listen_socket = UdpSocket::bind(format!("0.0.0.0:{}",PORT)).await?;
     let mut buf = [0u8; 1024];
     loop {
@@ -30,11 +31,7 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                         continue;
                     }
                 };
-                {
-                    println!("{:?},{}",data,sender_addr);
-                    let mut devices = devices.lock().await;
-                    devices.insert(data.id.clone(), (data,sender_addr.ip()));
-                }
+                add_device(&devices, data, sender_addr.ip(), app).await;
                 let payload = match bincode::serialize(&my_device) {
                     Ok(v) => v,
                     Err(err) => {
