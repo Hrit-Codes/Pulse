@@ -2,7 +2,8 @@ use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::From
 
 use clap::{Subcommand,Parser};
 use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
-    storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, run_resume_listener}}};
+    storage::TransferStore, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, 
+        run_resume_listener}}};
 use tokio::sync::Mutex;
 #[derive(Parser)]
 struct Cli{
@@ -68,7 +69,7 @@ async fn main(){
 
         Commands::Receive{port} => {
             let addr = SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), port);
-            if let Err(err) = receive_file(addr).await {
+            if let Err(err) = receive_file(addr,None).await {
                 eprintln!("error occurred {}", err);
             } 
         }
@@ -79,7 +80,7 @@ async fn main(){
         }
         Commands::Resend=> {
             if let Err(err) = run_resume_listener(SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 9000),
-                Arc::clone(&store)).await{
+                Arc::clone(&store),None).await{
                 eprintln!("error {}",err);
             }
         }

@@ -42,8 +42,7 @@ pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpA
             return Err(err.into());
         }
         Err(_) => {
-            // no reply arrived within 3 seconds
-            println!("no response within timeout");
+            // no reply arrived within 3 seconds leave it be
         }
     }
     Ok(())

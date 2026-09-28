@@ -2,10 +2,13 @@ use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, pat
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
+use tauri::AppHandle;
 use tokio::{io::{AsyncReadExt,AsyncWriteExt, AsyncSeekExt}, net::{TcpListener,TcpStream}};
 use uuid::Uuid;
-use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin, ResumeRequest, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame,
-        send_frame}}, util::{check_equal, generate_pin}};
+use crate::{protocol::frame::{MessageType, encode_frame}, storage::TransferStore, transfer::{CHUNK_SIZE, Chunk,
+    FileHash, FileMetadata, RequestPin, ResumeRequest, TransferComplete, TransferReject, TransferRequest,
+    stream::{connect_to_peer, read_frame,
+        send_frame}}, util::{check_equal, emit_error, generate_pin}};
 
 async fn send_chunk(
     tcp_stream: &mut TcpStream,
@@ -37,11 +40,11 @@ async fn send_file_hash_and_await_completion(
             if complete.success && complete.receiver_hash == file_hash.0 {
                 println!("Transfer verified successfully");
             } else {
-                eprintln!("Transfer failed or hash mismatch");
+                return Err("Transfer failed or hash mismatch".into())
             }
         }
         _ => {
-            eprintln!("unexpected response: {:?}", response_type);
+            return Err(format!("Unexpected response: {:?}", response_type).into())
         }
     }
     Ok(())
@@ -108,8 +111,7 @@ async fn send_file(
     match response_type {
         MessageType::TransferReject => {
             let reject_msg: TransferReject = bincode::deserialize(&response_payload)?;
-            println!("Transfer rejected: {}", reject_msg.reason);
-            return Ok(());
+            return Err(format!("Transfer rejected: {}", reject_msg.reason).into());
         }
         MessageType::TransferAccept => {
             // let file_bytes = tokio::fs::read(file_path).await?; //not supposed to do this
@@ -158,19 +160,20 @@ async fn send_file(
             send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash).await?;
         }
         _ => {
-            eprintln!("unexpected response: {:?}", response_type);
+            return Err(format!("unexpected response: {:?}", response_type).into())
         }
     }
 
     Ok(())
 }
 
-pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>) -> Result<(), Box<dyn Error>> {
+pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>,
+    app:Option<&AppHandle>) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(addr).await?;
     loop {
         let (stream, _peer_addr) = listener.accept().await?;
         if let Err(err) = handle_resume_request(stream, Arc::clone(&store)).await {
-            eprintln!("resume error: {err}");
+            emit_error(app, err.to_string()).await;
         }
     }
 }

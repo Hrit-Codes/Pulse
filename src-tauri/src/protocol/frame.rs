@@ -2,6 +2,9 @@
 // length --4B
 // type --1B
 // 1 frame --4+1+N bytes
+//
+use std::fmt;
+
 #[repr(u8)]
 #[derive(Debug,PartialEq)]
 pub enum MessageType {
@@ -45,6 +48,17 @@ impl MessageType {
 pub enum DecodeError{
     Incomplete,
     UnknownType(u8)
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DecodeError::Incomplete => write!(f, "incomplete frame"),
+            DecodeError::UnknownType(byte) => {
+                write!(f, "unknown message type: {}", byte)
+            }
+        }
+    }
 }
 
 pub fn encode_frame(message_type:MessageType,payload:&[u8])->Vec<u8>{

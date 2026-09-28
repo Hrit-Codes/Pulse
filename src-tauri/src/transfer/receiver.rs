@@ -2,18 +2,21 @@ use std::{collections::HashMap, error::Error, io::{self, SeekFrom}, net::{IpAddr
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
+use tauri::AppHandle;
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
 
 use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
-    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin, ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest, stream::{connect_to_peer, read_frame, send_frame}}};
+    storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin,
+        ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest,
+        stream::{connect_to_peer, read_frame, send_frame}}, util::emit_error};
 
-pub async fn receive_file(addr:SocketAddr)-> Result<(), Box<dyn Error>>{
+pub async fn receive_file(addr:SocketAddr,app:Option<&AppHandle>)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
     let store = Arc::new(TransferStore::new()?);
     loop {
         let (stream,_peer_addr) = listener.accept().await?;
         if let Err(err) = handle_connection(stream,Arc::clone(&store)).await {
-            eprintln!("transfer error: {}",err);
+            emit_error(app, err.to_string()).await;
         }
     }
 }
@@ -138,8 +141,6 @@ async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>)
         },
         MessageType::TransferRequest => {
             let request: TransferRequest = bincode::deserialize(&payload)?;
-            println!("Incoming transfer: {} ({} bytes)", request.filename, request.file_size);
-            //going to accept it for now. rejection will be implemented later
             let transfer_accept: TransferAccept = TransferAccept {
                 transfer_id: request.transfer_id,
             };
@@ -151,7 +152,6 @@ async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>)
             match msg_type {
                 MessageType::FileMetadata => {
                     let metadata: FileMetadata = bincode::deserialize(&payload)?;
-                    println!("file metadata {:?}", metadata);
 
                     store.create_transfer(&metadata.transfer_id,&request.filename,request.file_size,
                         metadata.total_chunks,metadata.chunk_size,&request.sender_id)?;

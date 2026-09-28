@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 use tokio::{net::UdpSocket, sync::Mutex};
 use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
-use crate::{discover::{DeviceInfo, PORT, add_device}, protocol::frame::{MessageType, decode_frame, encode_frame}};
+use crate::{discover::{DeviceInfo, PORT, add_device}, protocol::frame::{MessageType, decode_frame, encode_frame}, util::emit_error};
 
 pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,
     my_device:DeviceInfo,app:Option<&AppHandle>)->Result<(), Box<dyn Error>>{
@@ -11,14 +11,14 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
         let (bytes_received,sender_addr) = match listen_socket.recv_from(&mut buf).await {
             Ok(v) => v,
             Err(err) => {
-                eprintln!("recv error: {}",err);
+                emit_error(app, err.to_string()).await;
                 continue;
             }
         };
         let (msg_type,payload) = match decode_frame(&buf[..bytes_received]) {
             Ok(v) => v,
             Err(err) => {
-                eprintln!("decode error: {:?}",err);
+                emit_error(app, err.to_string()).await;
                 continue;
             }
         };
@@ -27,7 +27,7 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                 let data:DeviceInfo = match bincode::deserialize(&payload) {
                     Ok(v) => v,
                     Err(err) => {
-                        eprintln!("deserialize error: {}",err);
+                        emit_error(app, err.to_string()).await;
                         continue;
                     }
                 };
@@ -35,13 +35,13 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                 let payload = match bincode::serialize(&my_device) {
                     Ok(v) => v,
                     Err(err) => {
-                        eprintln!("error :{}",err);
+                        emit_error(app, err.to_string()).await;
                         continue;
                     }
                 };
                 let frame = encode_frame(MessageType::DiscoverResponse, &payload);
                 if let Err(err) = listen_socket.send_to(&frame, sender_addr).await {
-                    eprintln!("{}",err);
+                    emit_error(app, err.to_string()).await;
                 }
 
             }
