@@ -1,21 +1,28 @@
-use std::{collections::HashMap, error::Error, io::{self, SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
+use std::{collections::HashMap, error::Error, io::{SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tauri::AppHandle;
-use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex};
+use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::{Mutex, oneshot}};
 
 use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
     storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin,
         ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest,
         stream::{connect_to_peer, read_frame, send_frame}}, util::{emit_error, emit_message}};
 
-pub async fn receive_file(addr:SocketAddr,app:Option<&AppHandle>)-> Result<(), Box<dyn Error>>{
+pub async fn receive_file(addr:SocketAddr,app:Option<&AppHandle>,
+    pin_sender: Arc<Mutex<Option<oneshot::Sender<String>>>>)-> Result<(), Box<dyn Error>>{
     let listener = TcpListener::bind(addr).await?;
     let store = Arc::new(TransferStore::new()?);
     loop {
         let (stream,_peer_addr) = listener.accept().await?;
-        if let Err(err) = handle_connection(stream,Arc::clone(&store),app).await {
+        let (pin_tx,pin_rx) = oneshot::channel();
+        {
+            let mut sender = pin_sender.lock().await;
+            *sender = Some(pin_tx);
+        }
+        emit_message(app, "pin_required", String::new()).await;
+        if let Err(err) = handle_connection(stream,Arc::clone(&store),app,pin_rx).await {
             emit_error(app, err.to_string()).await;
         }
     }
@@ -122,14 +129,12 @@ async fn receive_chunks_and_finalize(
     Ok(())
 }
 
-async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>)
+async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>,
+    pin_rx:oneshot::Receiver<String>)
     -> Result<(), Box<dyn Error>> {
     //might require Arc<Mutex<>> later for concurrent transfers
 
-    let mut input = String::new();
-    println!("Enter the pin");
-    io::stdin().read_line(&mut input).expect("Error taking input");
-    let input = input.trim().to_string();
+    let input = pin_rx.await?;
     let pin:RequestPin = RequestPin(input);
     let payload = bincode::serialize(&pin)?;
     let frame = encode_frame(MessageType::RequestPin, &payload);

@@ -70,7 +70,7 @@ async fn main(){
 
         Commands::Receive{port} => {
             let addr = SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), port);
-            if let Err(err) = receive_file(addr,None).await {
+            if let Err(err) = receive_file(addr,None,Arc::new(Mutex::new(None))).await {
                 eprintln!("error occurred {}", err);
             } 
         }
