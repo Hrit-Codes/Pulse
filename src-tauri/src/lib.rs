@@ -4,7 +4,7 @@ pub mod storage;
 pub mod transfer;
 pub mod util;
 
-use std::{collections::HashMap, net::IpAddr,path::PathBuf};
+use std::{collections::HashMap, net::IpAddr, path::PathBuf};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -13,18 +13,25 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::discover::broadcaster::broadcast_discover;
 use crate::discover::get_devices;
+use crate::discover::{listener::listen_for_discover, DeviceInfo};
 use crate::storage::TransferStore;
-use crate::transfer::TRANSFER_PORT;
-use crate::transfer::receiver::resume_transfer;
+use crate::transfer::receiver::{receive_file, resume_transfer};
 use crate::transfer::sender::{request_to_send_file, run_resume_listener};
+use crate::transfer::TRANSFER_PORT;
 use crate::util::emit_error;
-use crate::{discover::{DeviceInfo, listener::listen_for_discover}, transfer::receiver::receive_file};
-
 
 pub type PinSenders = Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>;
+pub type Devices = Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>;
 
 // Holds the running receiver task so we can stop it later
 pub struct ReceiverHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
+pub struct ResumeHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
+
+fn load_my_device() -> Result<DeviceInfo, String> {
+    let store = TransferStore::new().map_err(|e| e.to_string())?;
+    let (id, name) = store.get_or_create_identity().map_err(|e| e.to_string())?;
+    Ok(DeviceInfo::new(id, name, TRANSFER_PORT))
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -70,8 +77,11 @@ fn start_receiver(
 
     let task = tauri::async_runtime::spawn(async move {
         //function no4: runs when 'start_receiver' is invoked
-        if let Err(e) = receive_file(addr, Some(app.clone()), pin_senders).await {
-            emit_error(Some(&app), e.to_string()).await;
+        let result = receive_file(addr, Some(app.clone()), pin_senders)
+            .await
+            .map_err(|e| e.to_string());
+        if let Err(msg) = result {
+            emit_error(Some(&app), msg).await;
         }
     });
     *guard = Some(task);
@@ -85,7 +95,6 @@ fn stop_receiver(handle: State<'_, ReceiverHandle>) {
         task.abort();
     }
 }
-pub struct ResumeHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
 
 #[tauri::command]
 fn start_resume_listener(
@@ -123,18 +132,8 @@ fn stop_resume_listener(handle: State<'_, ResumeHandle>) {
     }
 }
 
-
-fn load_my_device() -> Result<DeviceInfo, String> {
-    let store = TransferStore::new().map_err(|e| e.to_string())?;
-    let (id, name) = store.get_or_create_identity().map_err(|e| e.to_string())?;
-    Ok(DeviceInfo::new(id, name, 9000))
-}
-
 #[tauri::command]
-async fn broadcast(
-    app: AppHandle,
-    devices: State<'_, Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>>,
-) -> Result<(), String> {
+async fn broadcast(app: AppHandle, devices: State<'_, Devices>) -> Result<(), String> {
     let my_device = load_my_device()?;
     let devices = devices.inner().clone();
     //function no2: runs when 'broadcast' is invoked
@@ -145,7 +144,7 @@ async fn broadcast(
 
 #[tauri::command]
 async fn list_devices(
-    devices: State<'_, Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>>,
+    devices: State<'_, Devices>,
 ) -> Result<Vec<(DeviceInfo, IpAddr)>, String> {
     //function no3: runs when 'list_devices' is invoked
     Ok(get_devices(devices.inner().clone()).await)
@@ -158,7 +157,9 @@ async fn send_file(
     file_path: String,
     app: AppHandle,
 ) -> Result<(), String> {
-    let addr: SocketAddr = addr.parse().map_err(|e: std::net::AddrParseError| e.to_string())?;
+    let addr: SocketAddr = addr
+        .parse()
+        .map_err(|e: std::net::AddrParseError| e.to_string())?;
     let path = PathBuf::from(file_path);
     let store = Arc::new(TransferStore::new().map_err(|e| e.to_string())?);
     //function no5: runs when 'send_file' is invoked
@@ -171,7 +172,7 @@ async fn send_file(
 async fn resume(
     transfer_id: String,
     app: AppHandle,
-    devices: State<'_, Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>>,
+    devices: State<'_, Devices>,
 ) -> Result<(), String> {
     let store = Arc::new(TransferStore::new().map_err(|e| e.to_string())?);
     let devices = devices.inner().clone();
@@ -182,31 +183,21 @@ async fn resume(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let devices: Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let devices: Devices = Arc::new(Mutex::new(HashMap::new()));
 
     tauri::Builder::default()
         .manage(PinSenders::default())
         .manage(ReceiverHandle(std::sync::Mutex::new(None)))
+        .manage(ResumeHandle(std::sync::Mutex::new(None))) // was missing, needed for start_resume_listener
         .manage(devices.clone())
         .setup(move |app| {
             let handle = app.handle().clone();
             let devices = devices.clone();
 
             tauri::async_runtime::spawn(async move {
-                let store = match TransferStore::new() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let msg = e.to_string();
-                        emit_error(Some(&handle), msg).await;
-                        return;
-                    }
-                };
-
-                let my_device = match store.get_or_create_identity() {
-                    Ok((id, name)) => DeviceInfo::new(id, name, TRANSFER_PORT),
-                    Err(e) => {
-                        let msg = e.to_string();
+                let my_device = match load_my_device() {
+                    Ok(d) => d,
+                    Err(msg) => {
                         emit_error(Some(&handle), msg).await;
                         return;
                     }
