@@ -1,9 +1,9 @@
-use std::{error::Error, path::PathBuf, sync::Arc};
+use std::{error::Error, path::PathBuf, sync::{Arc, Mutex}};
 use uuid::Uuid;
 
 use crate::util::generate_pin;
 
-fn get_data_dir()->Result<PathBuf,Box<dyn Error>>{
+fn get_data_dir()->Result<PathBuf,Box<dyn Error + Send + Sync>>{
     let base_path =  dirs::data_dir().ok_or("Could not resolve base directory")?; //converting none
     //to an error
     let pulse_dir = base_path.join("pulse");
@@ -30,11 +30,11 @@ impl TransferStatus {
 
 #[derive(Debug)]
 pub struct TransferStore{
-    conn: rusqlite::Connection
+    conn: Mutex<rusqlite::Connection>
 }
 
 impl TransferStore {
-    pub fn new()->Result<Self,Box<dyn Error>>{
+    pub fn new()->Result<Self,Box<dyn Error + Send + Sync>>{
         let pulse_dir = get_data_dir()?;
         let db_path = pulse_dir.join("pulse.db");
         let conn = rusqlite::Connection::open(&db_path)?;
@@ -67,11 +67,12 @@ impl TransferStore {
             );
             CREATE INDEX IF NOT EXISTS idx_transfers_file_hash ON transfers(file_hash);
         ")?;
-        Ok(Self{conn})
+        Ok(Self{conn: Mutex::new(conn)})
     }
     
-    pub fn get_or_create_identity(&self)->Result<(String,String),Box<dyn Error>>{
-        let result: rusqlite::Result<(String, String)> = self.conn.query_row(
+    pub fn get_or_create_identity(&self)->Result<(String,String),Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        let result: rusqlite::Result<(String, String)> = conn.query_row(
             "SELECT id, name FROM device_identity LIMIT 1",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -83,7 +84,7 @@ impl TransferStore {
                 let id = Uuid::new_v4().to_string();
                 let name = generate_pin();
                 let name = String::from("User")+&name;
-                self.conn.execute(
+                conn.execute(
                     "INSERT INTO device_identity (id, name) VALUES (?1, ?2)",
                     (&id, &name),
                 )?;
@@ -94,22 +95,24 @@ impl TransferStore {
         } 
     }
 
-    pub fn get_chunk_dir(&self)->Result<PathBuf,Box<dyn Error>>{
+    pub fn get_chunk_dir(&self)->Result<PathBuf,Box<dyn Error + Send + Sync>>{
         let pulse_dir = get_data_dir()?;
         let chunk_dir = pulse_dir.join("chunks");
         Ok(chunk_dir)
     }
     
-    pub fn record_sent_transfer(&self,transfer_id: &str,file_path: &str)->Result<(),Box<dyn Error>>{
-        self.conn.execute("
+    pub fn record_sent_transfer(&self,transfer_id: &str,file_path: &str)->Result<(),Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        conn.execute("
             INSERT INTO sent_transfers (transfer_id,file_path) VALUES 
             (?1,?2)
         ",
         (transfer_id,file_path))?;
         Ok(())
     }
-    pub fn get_sent_transfer_path(&self,transfer_id: &str)->Result<Option<String>,Box<dyn Error>>{
-        let result: rusqlite::Result<String> = self.conn.query_row(
+    pub fn get_sent_transfer_path(&self,transfer_id: &str)->Result<Option<String>,Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        let result: rusqlite::Result<String> = conn.query_row(
             "SELECT file_path FROM sent_transfers WHERE transfer_id = ?1",
             [transfer_id],
             |row| row.get(0),
@@ -123,8 +126,9 @@ impl TransferStore {
     }
 
     pub fn create_transfer(&self, transfer_id: &str, filename: &str, file_size: u64,
-        total_chunks: usize, chunk_size: usize, sender_id: &str) -> Result<(), Box<dyn Error>>{
-        self.conn.execute("
+        total_chunks: usize, chunk_size: usize, sender_id: &str) -> Result<(), Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        conn.execute("
             INSERT INTO transfers (transfer_id,filename,file_size,total_chunks,chunk_size,sender_id) VALUES 
             (?1,?2,?3,?4,?5,?6)
         ",
@@ -132,10 +136,12 @@ impl TransferStore {
         Ok(())
     }
 
-    pub fn mark_chunks_received(&self,transfer_id: &str,chunk_indices: &[usize]) -> Result<(), Box<dyn Error>> {
+    pub fn mark_chunks_received(&self,transfer_id: &str,chunk_indices: &[usize]) -> Result<(), Box<dyn Error + Send + Sync>> {
         if chunk_indices.is_empty() {
             return Ok(());
         }
+
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
 
         let placeholders = std::iter::repeat("(?, ?)")
             .take(chunk_indices.len())
@@ -147,7 +153,7 @@ impl TransferStore {
             VALUES {}",
             placeholders
         );
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = conn.unchecked_transaction()?;
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(chunk_indices.len() * 2);
 
@@ -160,8 +166,9 @@ impl TransferStore {
     Ok(())
     }
 
-    pub fn get_received_chunks(&self, transfer_id: &str) -> Result<Vec<usize>, Box<dyn Error>> {
-        let mut stmt = self.conn.prepare("
+    pub fn get_received_chunks(&self, transfer_id: &str) -> Result<Vec<usize>, Box<dyn Error + Send + Sync>> {
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare("
             SELECT chunk_index FROM chunks WHERE transfer_id = ? ORDER BY chunk_index
         ")?;
         let chunks = stmt.query_map([transfer_id], |row| row.get::<_, i64>(0))?
@@ -171,14 +178,16 @@ impl TransferStore {
         .collect();
         Ok(chunks)
     }
-    pub fn update_status(&self, transfer_id: &str, status: TransferStatus)->Result<(), Box<dyn Error>>{
-        self.conn.execute("
+    pub fn update_status(&self, transfer_id: &str, status: TransferStatus)->Result<(), Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        conn.execute("
             UPDATE transfers SET status = ? WHERE transfer_id = ?
         ", (status.as_str(),transfer_id))?;
         Ok(())
     }
-    pub fn get_in_progress_transfers(&self) -> Result<Vec<(String, String, String, i64,i64)>, Box<dyn Error>> {
-        let mut stmt = self.conn.prepare(
+    pub fn get_in_progress_transfers(&self) -> Result<Vec<(String, String, String, i64,i64)>, Box<dyn Error + Send + Sync>> {
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        let mut stmt = conn.prepare(
             "SELECT transfer_id, sender_id, filename, file_size,total_chunks FROM transfers WHERE status = 'in_progress'"
         )?;
         let rows = stmt.query_map([], |row| {
@@ -188,15 +197,16 @@ impl TransferStore {
         Ok(rows)
     }
 
-    pub fn update_device_name(&self,name:&str)->Result<(),Box<dyn Error>>{
-        self.conn.execute("
+    pub fn update_device_name(&self,name:&str)->Result<(),Box<dyn Error + Send + Sync>>{
+        let conn = self.conn.lock().map_err(|e| format!("lock poisoned: {}", e))?;
+        conn.execute("
             UPDATE device_identity SET name = ?
         ", (name,))?;
         Ok(())
     }
 }
 
-pub fn change_name(store:Arc<TransferStore>,name:&str)->Result<(),Box<dyn Error>>{
+pub fn change_name(store:Arc<TransferStore>,name:&str)->Result<(),Box<dyn Error + Send + Sync>>{
     store.update_device_name(name)?;
     Ok(())
 }
@@ -210,7 +220,8 @@ mod transfer_store_tests{
         let store = TransferStore::new();
         assert!(store.is_ok());
         let store = store.unwrap();
-        let table_count:i64 = store.conn
+        let conn = store.conn.lock().unwrap();
+        let table_count:i64 = conn
                 .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('transfers', 'chunks')",
                 [],
@@ -234,13 +245,14 @@ mod transfer_store_tests{
 
         assert!(store.update_status("abcd", TransferStatus::Complete).is_ok());
 
-        let status: String = store.conn.query_row(
+        let conn = store.conn.lock().unwrap();
+        let status: String = conn.query_row(
             "SELECT status FROM transfers WHERE transfer_id = ?1",
             ["abcd"],
             |row| row.get(0),
         ).unwrap();
         assert_eq!(status, "complete");
-        let sender_id: String = store.conn.query_row(
+        let sender_id: String = conn.query_row(
             "SELECT sender_id FROM transfers WHERE transfer_id = ?1",
             ["abcd"],
             |row| row.get(0),
@@ -254,7 +266,8 @@ mod transfer_store_tests{
         assert!(store.is_ok());
         let store = store.unwrap();
         assert!(store.record_sent_transfer("demo_id", "home/path/transfer").is_ok());
-        let path: String = store.conn.query_row(
+        let conn = store.conn.lock().unwrap();
+        let path: String = conn.query_row(
             "SELECT file_path FROM sent_transfers WHERE transfer_id = ?1",
             ["demo_id"],
             |row| row.get(0),

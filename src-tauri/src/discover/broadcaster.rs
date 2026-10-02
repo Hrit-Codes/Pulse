@@ -18,31 +18,34 @@ pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpA
 
     broadcast_socket.send_to(&frame, format!("{}:{}",BROADCAST_ADDR,PORT)).await?;
     let mut buf = [0u8;1024];
-    let result = tokio::time::timeout(tokio::time::Duration::from_millis(3000), broadcast_socket.recv_from(&mut buf)).await;
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(3000);
 
-    match result {
-        Ok(Ok((bytes_received, responder_addr))) => {
-            let (msg_type,payload) = match decode_frame(&buf[..bytes_received]) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(format!("discover error: {:?}",err).into())
-                }
-            };
-            if let MessageType::DiscoverResponse = msg_type {
-                match bincode::deserialize::<DeviceInfo>(&payload) {
-                    Ok(data) => {
-                        add_device(&devices, data, responder_addr.ip(), app).await;
-                    },
-                    Err(err) => return Err(format!("deserialize error: {}",err).into())
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let result = tokio::time::timeout(remaining, broadcast_socket.recv_from(&mut buf)).await;
+        match result {
+            Ok(Ok((bytes_received, responder_addr))) => {
+                let (msg_type,payload) = match decode_frame(&buf[..bytes_received]) {
+                    Ok(v) => v,
+                    Err(_) => continue, // skip malformed frames, keep listening
                 };
+                if let MessageType::DiscoverResponse = msg_type {
+                    if let Ok(data) = bincode::deserialize::<DeviceInfo>(&payload) {
+                        add_device(&devices, data, responder_addr.ip(), app).await;
+                    }
+                }
             }
-        }
-        Ok(Err(err)) => {
-            // recv_from itself failed
-            return Err(err.into());
-        }
-        Err(_) => {
-            // no reply arrived within 3 seconds leave it be
+            Ok(Err(err)) => {
+                // recv_from itself failed
+                return Err(err.into());
+            }
+            Err(_) => {
+                // timeout expired, no more replies
+                break;
+            }
         }
     }
     Ok(())

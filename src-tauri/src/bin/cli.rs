@@ -4,7 +4,7 @@ use clap::{Subcommand,Parser};
 use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
     storage::{TransferStore, change_name}, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, 
         run_resume_listener}}};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 #[derive(Parser)]
 struct Cli{
     #[command(subcommand)]
@@ -70,7 +70,7 @@ async fn main(){
 
         Commands::Receive{port} => {
             let addr = SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), port);
-            if let Err(err) = receive_file(addr,None,Arc::new(Mutex::new(None))).await {
+            if let Err(err) = receive_file(addr,None,Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<String>>::new()))).await {
                 eprintln!("error occurred {}", err);
             } 
         }
@@ -80,18 +80,18 @@ async fn main(){
             }
         }
         Commands::Resend=> {
-            if let Err(err) = run_resume_listener(SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 9000),
+            if let Err(err) = run_resume_listener(SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 9001),
                 Arc::clone(&store),None).await{
                 eprintln!("error {}",err);
             }
         }
         Commands::Resume => {
             let mut devices:HashMap<String, (DeviceInfo,IpAddr)>= HashMap::new(); 
-            devices.insert("76e326b3-c74b-442c-b477-7e0a43d7f5d3".to_string(), 
-                (DeviceInfo::new("76e326b3-c74b-442c-b477-7e0a43d7f5d3".to_string(),
-                    "User2432".to_string(), 9000),IpAddr::from_str("127.0.0.1").unwrap()));
+            devices.insert("9125cfc9-e11f-4f73-99b8-3f257fbfd4e4".to_string(), 
+                (DeviceInfo::new("9125cfc9-e11f-4f73-99b8-3f257fbfd4e4".to_string(),
+                    "User5748".to_string(), 9000),IpAddr::from_str("127.0.0.1").unwrap()));
             let devices = Arc::new(Mutex::new(devices));
-            if let Err(err) = resume_transfer("0e069818-6921-40ef-967b-ec66c8027ecc".to_string(), Arc::clone(&store),
+            if let Err(err) = resume_transfer("97cd7fde-8c59-4928-8637-e9b3b7bdea1b".to_string(), Arc::clone(&store),
                 Arc::clone(&devices),None).await {
                 eprintln!("error occurred {}",err);
             }

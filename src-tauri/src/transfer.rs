@@ -5,7 +5,7 @@ pub mod receiver;
 pub mod stream;
 
 pub const CHUNK_SIZE:usize = 1024*1024;
-
+pub const TRANSFER_PORT:u16 = 9000;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TransferRequest {
     pub transfer_id: String,

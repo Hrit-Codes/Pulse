@@ -1,30 +1,39 @@
-use std::{collections::HashMap, error::Error, io::{SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
+use std::{collections::HashMap, error::Error, io::{self, SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tauri::AppHandle;
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::{Mutex, oneshot}};
-
-use crate::{discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
+use crate::{PinSenders, discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
     storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin,
         ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest,
         stream::{connect_to_peer, read_frame, send_frame}}, util::{emit_error, emit_message}};
 
-pub async fn receive_file(addr:SocketAddr,app:Option<&AppHandle>,
-    pin_sender: Arc<Mutex<Option<oneshot::Sender<String>>>>)-> Result<(), Box<dyn Error>>{
+pub async fn receive_file(addr:SocketAddr,app:Option<AppHandle>,
+    pin_senders: PinSenders)-> Result<(), Box<dyn Error + Send + Sync>>{
     let listener = TcpListener::bind(addr).await?;
     let store = Arc::new(TransferStore::new()?);
     loop {
         let (stream,_peer_addr) = listener.accept().await?;
+        let connection_id = uuid::Uuid::new_v4().to_string();
         let (pin_tx,pin_rx) = oneshot::channel();
         {
-            let mut sender = pin_sender.lock().await;
-            *sender = Some(pin_tx);
+            let mut senders = pin_senders.lock().await;
+            senders.insert(connection_id.clone(), pin_tx);
         }
-        emit_message(app, "pin_required", String::new()).await;
-        if let Err(err) = handle_connection(stream,Arc::clone(&store),app,pin_rx).await {
-            emit_error(app, err.to_string()).await;
-        }
+        emit_message(app.as_ref(), "pin_required", connection_id.clone()).await;
+
+        let store = Arc::clone(&store);
+        let app_clone = app.clone();
+        tokio::spawn(async move {
+            let err_msg = handle_connection(stream, store, app_clone.clone(), pin_rx)
+                .await
+                .err()
+                .map(|e| e.to_string());
+            if let Some(msg) = err_msg {
+                emit_error(app_clone.as_ref(), msg).await;
+            }
+        });
     }
 }
 
@@ -42,7 +51,7 @@ async fn receive_chunks_and_finalize(
     file: &mut tokio::fs::File,
     output_path: &std::path::Path,
     app:Option<&AppHandle>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pending_chunks = Vec::with_capacity(PENDING_CHUNKS);
 
     loop {
@@ -129,12 +138,17 @@ async fn receive_chunks_and_finalize(
     Ok(())
 }
 
-async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>,
+async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<AppHandle>,
     pin_rx:oneshot::Receiver<String>)
-    -> Result<(), Box<dyn Error>> {
-    //might require Arc<Mutex<>> later for concurrent transfers
+    -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut input = String::new();
+    if app.is_some() {
+        input = pin_rx.await?;
+    }else{
+        io::stdin().read_line(&mut input).expect("error taking input");
 
-    let input = pin_rx.await?;
+    }
+    let input = input.trim().to_string();
     let pin:RequestPin = RequestPin(input);
     let payload = bincode::serialize(&pin)?;
     let frame = encode_frame(MessageType::RequestPin, &payload);
@@ -186,7 +200,7 @@ async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,
                         0,
                         &mut file,
                         &output_path,
-                        app
+                        app.as_ref()
                     )
                     .await?;
                 }
@@ -203,7 +217,7 @@ pub async fn resume_transfer(
     store: Arc<TransferStore>,
     devices: Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>,
     app:Option<&AppHandle>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let pending = store.get_in_progress_transfers()?;
     let (_, sender_id, filename, _file_size, total_chunks) = pending
         .into_iter()
@@ -214,7 +228,7 @@ pub async fn resume_transfer(
     {
         let device_guard = devices.lock().await;
         let (device_info, ip) = device_guard.get(&sender_id).ok_or("Device is not discoverable")?;
-        sender_addr = SocketAddr::new(*ip, device_info.port);
+        sender_addr = SocketAddr::new(*ip, device_info.port+1); //port+1 for resumption
     }
     let received_chunks = store.get_received_chunks(&transfer_id)?;
     let received_count = received_chunks.len();

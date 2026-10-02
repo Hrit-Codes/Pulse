@@ -14,7 +14,7 @@ async fn send_chunk(
     tcp_stream: &mut TcpStream,
     chunk_index: usize,
     data: Vec<u8>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let chunk = Chunk { chunk_index, data };
     let payload = bincode::serialize(&chunk)?;
     let frame = encode_frame(MessageType::Chunk, &payload);
@@ -29,7 +29,7 @@ async fn send_file_hash_and_await_completion(
     buffer: &mut BytesMut,
     file_hash: FileHash,
     app:Option<&AppHandle>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let payload = bincode::serialize(&file_hash)?;
     let frame = encode_frame(MessageType::FileHash, &payload);
     send_frame(tcp_stream, &frame).await?; //sent the file hash after all the chunks
@@ -53,7 +53,7 @@ async fn send_file_hash_and_await_completion(
 
 pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: &Path,store: Arc<TransferStore>,
     app:Option<&AppHandle>)->
-    Result<(),Box<dyn Error>>{
+    Result<(),Box<dyn Error + Send + Sync>>{
     let mut tcp_stream = connect_to_peer(addr).await?;
     //authorization
     let pin = generate_pin();
@@ -87,7 +87,7 @@ async fn send_file(
     file_path: &Path,
     store: Arc<TransferStore>,
     app: Option<&AppHandle>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let transfer_id = Uuid::new_v4().to_string(); //sender is generating a new trasfer_id for every
     //fn call
     let file_data = tokio::fs::metadata(file_path).await?;
@@ -171,7 +171,7 @@ async fn send_file(
 }
 
 pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>,
-    app:Option<&AppHandle>) -> Result<(), Box<dyn Error>> {
+    app:Option<&AppHandle>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     loop {
         let (stream, _peer_addr) = listener.accept().await?;
@@ -182,7 +182,7 @@ pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>,
 }
 
 async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut buffer = BytesMut::new();
     let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
 

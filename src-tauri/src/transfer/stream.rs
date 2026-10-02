@@ -38,7 +38,7 @@ pub async fn send_frame(tcp_stream:&mut TcpStream,bytes:&[u8])->Result<(),io::Er
 //     }
 // }
 pub async fn read_frame(tcp_stream: &mut TcpStream, buffer: &mut BytesMut) ->
-Result<(MessageType, Vec<u8>), Box<dyn Error>> {
+Result<(MessageType, Vec<u8>), Box<dyn Error + Send + Sync>> {
     loop {
         match decode_frame(buffer) {
             Ok((msg_type, payload)) => {
