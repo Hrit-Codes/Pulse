@@ -39,7 +39,7 @@ async fn send_file_hash_and_await_completion(
         MessageType::TransferComplete => {
             let complete: TransferComplete = bincode::deserialize(&response_payload)?;
             if complete.success && complete.receiver_hash == file_hash.0 {
-                emit_message(app, "transfer_complete", "transfer verified successfully".to_string()).await;
+                emit_message(app, "transfer_complete_sender", "Transfer verified successfully".to_string()).await;
             } else {
                 return Err("Transfer failed or hash mismatch".into())
             }

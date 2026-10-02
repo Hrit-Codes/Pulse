@@ -134,7 +134,7 @@ async fn receive_chunks_and_finalize(
     let payload = bincode::serialize(&complete)?;
     let frame = encode_frame(MessageType::TransferComplete, &payload);
     send_frame(tcp_stream, &frame).await?;
-    emit_message(app, "transfer_complete","File is successfully received".to_string()).await;
+    emit_message(app, "transfer_complete_receiver","File is successfully received".to_string()).await;
     Ok(())
 }
 

@@ -180,6 +180,20 @@ async fn resume(
         .await
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+fn get_identity()->Result<DeviceInfo,String>{
+    load_my_device()
+}
+
+#[tauri::command]
+fn get_pending_transfers() -> Result<Vec<(String, String, String, i64, i64)>, String> {
+    let store = TransferStore::new()
+        .map_err(|e| e.to_string())?;
+
+    store
+        .get_in_progress_transfers()
+        .map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -225,7 +239,9 @@ pub fn run() {
             send_file, //send file to receiver
             start_resume_listener, //sender listens to resume transfer
             stop_resume_listener, //stop the listen resume function
-            resume //receiver invokes it asking to resume the transfer
+            resume, //receiver invokes it asking to resume the transfer
+            get_identity, //get your device identity
+            get_pending_transfers //get all pending transfers
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -32,7 +32,7 @@ pub(super) async fn add_device(
         devices.insert(device.id.clone(),(device, ip));
     }
     if let Some(app) = app{
-        let _ = app.emit("devices-changed", ());
+        let _ = app.emit("devices_changed", ());
     }
 }
 
