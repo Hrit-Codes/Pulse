@@ -7,6 +7,7 @@ pub mod util;
 use std::{collections::HashMap, net::IpAddr, path::PathBuf};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::net::UdpSocket;
 
 use tauri::{async_runtime::JoinHandle, AppHandle, State};
 use tokio::sync::{oneshot, Mutex};
@@ -27,11 +28,21 @@ pub type Devices = Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>;
 pub struct ReceiverHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
 pub struct ResumeHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
 
+#[tauri::command]
+fn get_local_ip() -> Result<String, String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    socket.connect("8.8.8.8:80").map_err(|e| e.to_string())?;
+    let addr = socket.local_addr().map_err(|e| e.to_string())?;
+    Ok(addr.ip().to_string())
+}
+
 fn load_my_device() -> Result<DeviceInfo, String> {
     let store = TransferStore::new().map_err(|e| e.to_string())?;
     let (id, name) = store.get_or_create_identity().map_err(|e| e.to_string())?;
     Ok(DeviceInfo::new(id, name, TRANSFER_PORT))
 }
+
+
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -241,6 +252,7 @@ pub fn run() {
             stop_resume_listener, //stop the listen resume function
             resume, //receiver invokes it asking to resume the transfer
             get_identity, //get your device identity
+            get_local_ip,
             get_pending_transfers //get all pending transfers
         ])
         .run(tauri::generate_context!())

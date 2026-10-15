@@ -15,12 +15,27 @@ interface SettingsPageProps {
 
 export function SettingsPage({ localDeviceName, localIp, trustedDevices }: SettingsPageProps) {
 //   const [pairingRequest, setPairingRequest] = useState<PairingRequest | null>(null);
+  const [identity, setIdentity]=useState<{id:string, name:string, port:number}| null>(null);
   const [isDiscoveryEnabled, setIsDiscoveryEnabled]=useState(true);
+  const [isDiscoveryLoading, setIsDiscoveryLoading]=useState(true);
   const [isThemeDropdownOpen, setIsThemeDropdownOpen]=useState(false);
   const {theme, setTheme}=useTheme();
   const [downloadPath, setDownloadPath]=useState("");
   const [isLoading, setIsLoading]=useState(true);
   const [isSaving, setIsSaving]=useState(false);
+
+  useEffect(()=>{
+    const load=async()=>{
+      try{
+        const info=await invoke<{id:string; name:string; port:number}>("get_identity");
+        setIdentity(info);
+      }catch(err){
+        console.log("Failed to get identity::",err);
+      }
+    }
+    load();
+  },[]);
+
 
   useEffect(()=>{
     const loadDiscoveryState=async()=>{
@@ -29,6 +44,8 @@ export function SettingsPage({ localDeviceName, localIp, trustedDevices }: Setti
             setIsDiscoveryEnabled(state);
         }catch(error){
             console.log("Failed to load discovery state:",error);
+        }finally{
+            setIsDiscoveryLoading(false);
         }
     }
     loadDiscoveryState();
@@ -114,7 +131,7 @@ export function SettingsPage({ localDeviceName, localIp, trustedDevices }: Setti
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2 border-b border-border">
             <span className="text-sm text-text-muted">DEVICE NAME</span>
-            <span className="text-sm font-medium">{localDeviceName}</span>
+            <span className="text-sm font-medium">{identity?.name ?? localDeviceName}</span>
           </div>
           <div className="flex items-center justify-between py-2 border-b border-border">
             <span className="text-sm text-text-muted">LOCAL IP</span>
@@ -123,12 +140,21 @@ export function SettingsPage({ localDeviceName, localIp, trustedDevices }: Setti
           <div className="flex items-center justify-between py-2 border-b border-border">
             <span className="text-sm text-text-muted">Discovery status</span>
             <span className="flex items-center gap-2">
-              <span className="status-dot inline-block" />
-              <span className="text-sm text-success">Online</span>
+              <span
+                className={`status-dot inline-block ${
+                  isDiscoveryEnabled ? "" : "status-dot-off"
+                }`}
+              />
+              <span
+                className={`text-sm ${isDiscoveryEnabled ? "text-success" : "text-text-muted"}`}
+              >
+                {isDiscoveryEnabled ? "Discoverable" : "Hidden"}
+              </span>
               <button
                 type="button"
                 onClick={toggleDisovery}
-                className={`relative w-10 h-5 rounded-full transition-colors ${isDiscoveryEnabled? "bg-success":"bg-danger-dim"}`}
+                disabled={isDiscoveryLoading}
+                className={`relative w-10 h-5 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDiscoveryEnabled? "bg-success":"bg-danger-dim"}`}
                 role="switch"
                 aria-checked={isDiscoveryEnabled}
                 >

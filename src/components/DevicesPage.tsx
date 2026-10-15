@@ -1,13 +1,20 @@
-import { CheckIcon, FileWarningIcon, PauseIcon, WifiIcon, LoaderIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  CheckIcon,
+  FileWarningIcon,
+  LoaderIcon,
+  PauseIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+  WifiIcon,
+} from "lucide-react";
+import { useState } from "react";
 import { Device, Transfer } from "../types";
 import { DeviceCard } from "../components/DeviceCard";
 import { formatBytes } from "../format";
 import { SendFileModal } from "./SendFileModel";
-import { fetchDevices } from "../hooks/useDevices";
+import { useDevices } from "../hooks/useDevices";
 
 interface DevicesPageProps {
-  devices: Device[];          
   recentTransfers: Transfer[];
   onSendFiles: (device: Device, files: File[]) => void;
 }
@@ -22,23 +29,9 @@ const STATUS_META: Record<
   transferring: { icon: <div className="w-2 h-2 rounded-full bg-accent-light animate-pulse" />, className: "text-accent-light", label: "In progress" },
 };
 
-export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPageProps) {
-  const [rdevices, setRDevices] = useState<Device[]>([]);
-  const [loading, setLoading] = useState(true);
+export function DevicesPage({ recentTransfers, onSendFiles }: DevicesPageProps) {
+  const { devices, loading, error, onlineCount, scan } = useDevices();
   const [sendTarget, setSendTarget] = useState<Device | null>(null);
-
-  const loadDevices = async () => {
-    setLoading(true);
-    const list = await fetchDevices();
-    setRDevices(list);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    loadDevices();
-  }, []);
-
-  const onlineCount = rdevices.filter((d) => d.status === "online").length;
 
   return (
     <div className="page">
@@ -46,7 +39,11 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
       <header className="page-header">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="status-dot inline-block" />
+            <span
+              className={`status-dot inline-block ${
+                error ? "status-dot-error" : onlineCount > 0 ? "" : "status-dot-off"
+              }`}
+            />
             <span className="text-xs font-medium text-text-muted">
               {onlineCount} device{onlineCount === 1 ? "" : "s"} online
             </span>
@@ -58,7 +55,7 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
         </div>
         <button
           className="btn btn-secondary"
-          onClick={loadDevices}
+          onClick={scan}
           disabled={loading}
         >
           {loading ? (
@@ -75,6 +72,20 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
         <div className="flex items-center justify-center py-12">
           <LoaderIcon size={32} className="animate-spin text-accent-light" />
           <span className="ml-3 text-text-muted">Scanning for devices...</span>
+        </div>
+      ) : error ? (
+        <div className="empty-state mb-6">
+          <TriangleAlertIcon size={32} className="mx-auto mb-2 text-danger" />
+          <p>{error}</p>
+          <div className="mt-3 flex justify-center">
+            <button
+              className="btn btn-secondary text-sm"
+              onClick={scan}
+            >
+              <RefreshCwIcon size={14} />
+              Try again
+            </button>
+          </div>
         </div>
       ) : devices.length > 0 ? (
         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -105,7 +116,7 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
           <div className="space-y-2">
             {recentTransfers.map((t) => {
               const meta = STATUS_META[t.status] ?? STATUS_META.completed;
-              const progress = (t.transferredBytes / t.sizeBytes) * 100;
+              const progress = t.sizeBytes > 0 ? (t.transferredBytes / t.sizeBytes) * 100 : 0;
 
               return (
                 <div

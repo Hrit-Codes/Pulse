@@ -1,16 +1,29 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Device, PageId, Transfer } from "./types";
 import { mockDevices, mockTransfers } from "./mockData";
 import Sidebar from "./components/Sidebar";
 import { DevicesPage } from "./components/DevicesPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { invoke } from "@tauri-apps/api/core";
 
-const LOCAL_DEVICE_NAME="Hrit's Macbook";
-const LOCAL_IP="192.168.1.12";
+const LOCAL_DEVICE_NAME="User Device";
 
 export default function App(){
   const [page, setPage]=useState<PageId>("devices");
+  const [localIp, setLocalIp]=useState<string>("-");
   const [transfers, setTransfers]=useState<Transfer[]>(mockTransfers);
+
+  useEffect(()=>{
+    const load=async()=>{
+      try{
+        const ip=await invoke<string>("get_local_ip");
+        setLocalIp(ip);
+      }catch(err){
+        console.log("Failed to get local IP::",err);
+      }
+    }
+    load();
+  },[])
 
   const activeTransferCount=useMemo(
     ()=>transfers.filter((t)=>t.status==="transferring"||t.status==="connecting").length,
@@ -47,13 +60,12 @@ export default function App(){
         active={page}
         onNavigate={setPage}
         localDeviceName={LOCAL_DEVICE_NAME}
-        localIp={LOCAL_IP}
+        localIp={localIp}
         activeTransferCount={activeTransferCount}
         />
         <main className="app-main">
           {page==="devices" && (
             <DevicesPage
-              devices={mockDevices}
               recentTransfers={transfers.slice(0,4)}
               onSendFiles={handleSendFiles}
             />
@@ -61,7 +73,7 @@ export default function App(){
           {page==="settings" && (
             <SettingsPage 
               localDeviceName={LOCAL_DEVICE_NAME}
-              localIp={LOCAL_IP}
+              localIp={localIp}
               trustedDevices={mockDevices}/>
           )}
 
