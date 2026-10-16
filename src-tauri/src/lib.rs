@@ -211,6 +211,8 @@ pub fn run() {
     let devices: Devices = Arc::new(Mutex::new(HashMap::new()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PinSenders::default())
         .manage(ReceiverHandle(std::sync::Mutex::new(None)))
         .manage(ResumeHandle(std::sync::Mutex::new(None))) // was missing, needed for start_resume_listener

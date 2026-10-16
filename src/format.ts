@@ -25,3 +25,9 @@ export function formatRelativeDate(iso: string): string {
   if (diffHr < 24) return `${diffHr}h ago`;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+export function baseName(filePath: string): string {
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
+}
+

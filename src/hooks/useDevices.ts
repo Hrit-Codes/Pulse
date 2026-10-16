@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Device } from "../types";
+import { broadcast, listDevices, type DeviceInfo } from "../api";
 
 const DESKTOP_HINTS = [
   "desktop",
@@ -17,19 +17,12 @@ function inferKind(name: string): Device["kind"] {
   return DESKTOP_HINTS.some((hint) => lowered.includes(hint)) ? "desktop" : "laptop";
 }
 
-interface DiscoveredDeviceInfo {
-  id: string;
-  name: string;
-  port: number;
-}
-
-type ListDevicesResult = Array<[DiscoveredDeviceInfo, string]>;
-
-function toDevice(info: DiscoveredDeviceInfo, ip: string): Device {
+function toDevice(info: DeviceInfo, ip: string): Device {
   return {
     id: info.id,
     name: info.name,
     ip,
+    port: info.port,
     status: "online",
     kind: inferKind(info.name),
   };
@@ -44,8 +37,8 @@ export function useDevices() {
     setLoading(true);
     setError(null);
     try {
-      await invoke("broadcast");
-      const found = await invoke<ListDevicesResult>("list_devices");
+      await broadcast();
+      const found = await listDevices();
       const unique = new Map<string, Device>();
       for (const entry of found ?? []) {
         if (!Array.isArray(entry) || entry.length < 2) continue;

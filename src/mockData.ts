@@ -1,9 +1,9 @@
 import type { Device, SyncConflict, SyncFolder, Transfer } from "./types";
 
 export const mockDevices: Device[] = [
-  { id: "dev-1", name: "Hrit's MacBook", ip: "192.168.1.12", status: "online", kind: "laptop" },
-  { id: "dev-2", name: "Alex's Laptop", ip: "192.168.1.21", status: "online", kind: "laptop" },
-  { id: "dev-3", name: "Lab PC", ip: "192.168.1.34", status: "offline", kind: "desktop" },
+  { id: "dev-1", name: "Hrit's MacBook", ip: "192.168.1.12", port: 9000, status: "online", kind: "laptop" },
+  { id: "dev-2", name: "Alex's Laptop", ip: "192.168.1.21", port: 9000, status: "online", kind: "laptop" },
+  { id: "dev-3", name: "Lab PC", ip: "192.168.1.34", port: 9000, status: "offline", kind: "desktop" },
 ];
 
 export const mockTransfers: Transfer[] = [

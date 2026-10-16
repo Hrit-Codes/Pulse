@@ -3,6 +3,7 @@ import {
   FileWarningIcon,
   LoaderIcon,
   PauseIcon,
+  PlayIcon,
   RefreshCwIcon,
   TriangleAlertIcon,
   WifiIcon,
@@ -16,7 +17,9 @@ import { useDevices } from "../hooks/useDevices";
 
 interface DevicesPageProps {
   recentTransfers: Transfer[];
-  onSendFiles: (device: Device, files: File[]) => void;
+  onSendFiles: (device: Device, path: string) => void;
+  resumableIds: Set<string>;
+  onResume: (transferId: string) => void;
 }
 
 const STATUS_META: Record<
@@ -27,9 +30,15 @@ const STATUS_META: Record<
   paused: { icon: <PauseIcon size={14} />, className: "text-warning", label: "Paused" },
   failed: { icon: <FileWarningIcon size={14} />, className: "text-danger", label: "Failed" },
   transferring: { icon: <div className="w-2 h-2 rounded-full bg-accent-light animate-pulse" />, className: "text-accent-light", label: "In progress" },
+  connecting: { icon: <LoaderIcon size={14} className="animate-spin" />, className: "text-accent-light", label: "Connecting" },
 };
 
-export function DevicesPage({ recentTransfers, onSendFiles }: DevicesPageProps) {
+export function DevicesPage({
+  recentTransfers,
+  onSendFiles,
+  resumableIds,
+  onResume,
+}: DevicesPageProps) {
   const { devices, loading, error, onlineCount, scan } = useDevices();
   const [sendTarget, setSendTarget] = useState<Device | null>(null);
 
@@ -117,6 +126,7 @@ export function DevicesPage({ recentTransfers, onSendFiles }: DevicesPageProps) 
             {recentTransfers.map((t) => {
               const meta = STATUS_META[t.status] ?? STATUS_META.completed;
               const progress = t.sizeBytes > 0 ? (t.transferredBytes / t.sizeBytes) * 100 : 0;
+              const canResume = resumableIds.has(t.id);
 
               return (
                 <div
@@ -153,6 +163,15 @@ export function DevicesPage({ recentTransfers, onSendFiles }: DevicesPageProps) 
                     <span className="text-xs text-text-muted font-mono">
                       {formatBytes(t.sizeBytes)}
                     </span>
+                    {canResume && (
+                      <button
+                        className="btn btn-secondary text-xs px-2 py-1 inline-flex items-center gap-1"
+                        onClick={() => onResume(t.id)}
+                      >
+                        <PlayIcon size={12} />
+                        Resume
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -166,8 +185,8 @@ export function DevicesPage({ recentTransfers, onSendFiles }: DevicesPageProps) 
         <SendFileModal
           device={sendTarget}
           onClose={() => setSendTarget(null)}
-          onSend={(files) => {
-            onSendFiles(sendTarget, files);
+          onSend={(path) => {
+            onSendFiles(sendTarget,path);
             setSendTarget(null);
           }}
         />
