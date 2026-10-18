@@ -1,6 +1,7 @@
 import {
   CheckIcon,
   FileWarningIcon,
+  FlaskConicalIcon,
   LoaderIcon,
   PauseIcon,
   PlayIcon,
@@ -9,6 +10,7 @@ import {
   WifiIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Device, Transfer } from "../types";
 import { DeviceCard } from "../components/DeviceCard";
 import { formatBytes } from "../format";
@@ -18,8 +20,10 @@ import { useDevices } from "../hooks/useDevices";
 interface DevicesPageProps {
   recentTransfers: Transfer[];
   onSendFiles: (device: Device, path: string) => void;
+  onSelfTest: (path: string) => void;
   resumableIds: Set<string>;
   onResume: (transferId: string) => void;
+  selfTestRunning?: boolean;
 }
 
 const STATUS_META: Record<
@@ -36,11 +40,32 @@ const STATUS_META: Record<
 export function DevicesPage({
   recentTransfers,
   onSendFiles,
+  onSelfTest,
   resumableIds,
   onResume,
+  selfTestRunning,
 }: DevicesPageProps) {
   const { devices, loading, error, onlineCount, scan } = useDevices();
   const [sendTarget, setSendTarget] = useState<Device | null>(null);
+  const [pickingTest, setPickingTest] = useState(false);
+
+  const pickAndSelfTest = async () => {
+    try {
+      setPickingTest(true);
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Select a file to test transfer",
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      onSelfTest(path);
+    } catch (e) {
+      console.log("Failed to pick file for self-test::", e);
+    } finally {
+      setPickingTest(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -62,18 +87,33 @@ export function DevicesPage({
             {onlineCount} device{onlineCount === 1 ? "" : "s"} available for transfer on this network
           </p>
         </div>
-        <button
-          className="btn btn-secondary"
-          onClick={scan}
-          disabled={loading}
-        >
-          {loading ? (
-            <LoaderIcon size={16} className="animate-spin" />
-          ) : (
-            <WifiIcon size={16} />
-          )}
-          {loading ? "Scanning..." : "Scan"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-secondary"
+            onClick={pickAndSelfTest}
+            disabled={selfTestRunning || pickingTest}
+            title="Send a file to this device to verify file transfer works"
+          >
+            {selfTestRunning || pickingTest ? (
+              <LoaderIcon size={16} className="animate-spin" />
+            ) : (
+              <FlaskConicalIcon size={16} />
+            )}
+            {selfTestRunning ? "Testing..." : "Test on this device"}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={scan}
+            disabled={loading}
+          >
+            {loading ? (
+              <LoaderIcon size={16} className="animate-spin" />
+            ) : (
+              <WifiIcon size={16} />
+            )}
+            {loading ? "Scanning..." : "Scan"}
+          </button>
+        </div>
       </header>
 
       {/* Device Grid */}

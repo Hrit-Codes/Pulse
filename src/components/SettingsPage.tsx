@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Device } from "../types";
-import { LockIcon, ShieldIcon, CheckCircleIcon, FolderIcon, InfoIcon } from "lucide-react";
+import { ShieldIcon, CheckCircleIcon, FolderIcon, InfoIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "../context/ThemeContext";
 import { downloadDir } from "@tauri-apps/api/path";
@@ -17,7 +17,7 @@ const themeOptions = [
   { value: "dark", label: "Dark" },
 ] as const;
 
-export function SettingsPage({ localDeviceName, localIp, trustedDevices }: SettingsPageProps) {
+export function SettingsPage({ localDeviceName, localIp }: SettingsPageProps) {
   const [identity, setIdentity] = useState<{ id: string; name: string; port: number } | null>(null);
   const [isDiscoveryEnabled, setIsDiscoveryEnabled] = useState(true);
   const [isDiscoveryLoading, setIsDiscoveryLoading] = useState(true);

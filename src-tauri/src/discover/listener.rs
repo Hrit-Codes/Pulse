@@ -1,14 +1,14 @@
 use tauri::AppHandle;
 use tokio::{net::UdpSocket, sync::Mutex};
 use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
-use crate::{discover::{DeviceInfo, PORT, add_device}, protocol::frame::{MessageType, decode_frame, encode_frame}, util::emit_error};
+use crate::{discover::{DeviceInfo, add_device}, protocol::frame::{MessageType, decode_frame, encode_frame}, util::emit_error};
 
-pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,
+pub async fn listen_for_discover(socket:Arc<UdpSocket>,
+    devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,
     my_device:DeviceInfo,app:Option<&AppHandle>)->Result<(), Box<dyn Error>>{
-    let listen_socket = UdpSocket::bind(format!("0.0.0.0:{}",PORT)).await?;
     let mut buf = [0u8; 1024];
     loop {
-        let (bytes_received,sender_addr) = match listen_socket.recv_from(&mut buf).await {
+        let (bytes_received,sender_addr) = match socket.recv_from(&mut buf).await {
             Ok(v) => v,
             Err(err) => {
                 emit_error(app, err.to_string()).await;
@@ -31,7 +31,11 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                         continue;
                     }
                 };
-                add_device(&devices, data, sender_addr.ip(), app).await;
+                // ignore our own broadcast looping back on this machine
+                if data.id == my_device.id {
+                    continue;
+                }
+                add_device(&devices, data, sender_addr.ip(), &my_device.id, app).await;
                 let payload = match bincode::serialize(&my_device) {
                     Ok(v) => v,
                     Err(err) => {
@@ -40,10 +44,20 @@ pub async fn listen_for_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,Ip
                     }
                 };
                 let frame = encode_frame(MessageType::DiscoverResponse, &payload);
-                if let Err(err) = listen_socket.send_to(&frame, sender_addr).await {
+                if let Err(err) = socket.send_to(&frame, sender_addr).await {
                     emit_error(app, err.to_string()).await;
                 }
 
+            }
+            MessageType::DiscoverResponse => {
+                let data:DeviceInfo = match bincode::deserialize(&payload) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        emit_error(app, err.to_string()).await;
+                        continue;
+                    }
+                };
+                add_device(&devices, data, sender_addr.ip(), &my_device.id, app).await;
             }
             _ => continue
         }

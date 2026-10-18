@@ -1,52 +1,50 @@
-use crate::{discover::{BROADCAST_ADDR, DeviceInfo, LOCAL_BIND_ADDR, PORT},
-    protocol::frame::{self, MessageType, decode_frame}};
-use std::{collections::HashMap, error::Error, net::IpAddr, sync::Arc};
-use tauri::AppHandle;
-use tokio::{net::UdpSocket, sync::Mutex};
-use super::add_device;
+use crate::{discover::{BROADCAST_ADDR, DeviceInfo, PORT},
+    protocol::frame::{self, MessageType}};
+use std::{error::Error, net::{IpAddr, Ipv4Addr, SocketAddr}, sync::Arc, time::Duration};
+use tokio::net::UdpSocket;
 
-pub async fn broadcast_discover(devices:Arc<Mutex<HashMap<String,(DeviceInfo,IpAddr)>>>,my_device:DeviceInfo,
-    app:Option<&AppHandle>)
+fn subnet_broadcast_target() -> Option<SocketAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let IpAddr::V4(local) = socket.local_addr().ok()?.ip() else {
+        return None;
+    };
+    // supplementary target for networks that filter 255.255.255.255; assumes a /24 LAN
+    let mut octets = local.octets();
+    octets[3] = 255;
+    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::from(octets)), PORT))
+}
+
+// sends the Discover frame from the shared discovery socket (well-known port),
+// so peers can reply directly to that port instead of an ephemeral one
+pub async fn broadcast_discover(socket:Arc<UdpSocket>,my_device:&DeviceInfo)
     ->Result<(),Box<dyn Error>>{
 
-    let payload = bincode::serialize(&my_device)?;
+    let payload = bincode::serialize(my_device)?;
+    let frame = frame::encode_frame(MessageType::Discover, &payload);
 
-    let frame = frame::encode_frame(frame::MessageType::Discover, &payload);
-
-    let broadcast_socket = UdpSocket::bind(LOCAL_BIND_ADDR).await?;
-    broadcast_socket.set_broadcast(true)?;
-
-    broadcast_socket.send_to(&frame, format!("{}:{}",BROADCAST_ADDR,PORT)).await?;
-    let mut buf = [0u8;1024];
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(3000);
-
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
+    let mut targets = vec![format!("{}:{}",BROADCAST_ADDR,PORT)];
+    if let Some(extra) = subnet_broadcast_target() {
+        let extra = extra.to_string();
+        if !targets.contains(&extra) {
+            targets.push(extra);
         }
-        let result = tokio::time::timeout(remaining, broadcast_socket.recv_from(&mut buf)).await;
-        match result {
-            Ok(Ok((bytes_received, responder_addr))) => {
-                let (msg_type,payload) = match decode_frame(&buf[..bytes_received]) {
-                    Ok(v) => v,
-                    Err(_) => continue, // skip malformed frames, keep listening
-                };
-                if let MessageType::DiscoverResponse = msg_type {
-                    if let Ok(data) = bincode::deserialize::<DeviceInfo>(&payload) {
-                        add_device(&devices, data, responder_addr.ip(), app).await;
-                    }
-                }
-            }
-            Ok(Err(err)) => {
-                // recv_from itself failed
-                return Err(err.into());
-            }
-            Err(_) => {
-                // timeout expired, no more replies
-                break;
+    }
+
+    let mut sent = false;
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        for target in &targets {
+            if socket.send_to(&frame, target).await.is_ok() {
+                sent = true;
             }
         }
+    }
+
+    if !sent {
+        return Err("failed to send discovery broadcast".into());
     }
     Ok(())
 }

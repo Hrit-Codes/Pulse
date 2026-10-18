@@ -145,3 +145,7 @@ export function onTransferComplete(
 export function onError(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("error", (event) => handler(event.payload));
 }
+
+export function onDevicesChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("devices_changed", () => handler());
+}
