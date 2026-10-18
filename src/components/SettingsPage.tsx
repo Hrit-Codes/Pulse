@@ -107,7 +107,7 @@ export function SettingsPage({ localDeviceName, localIp }: SettingsPageProps) {
                 onClick={toggleDiscovery}
                 disabled={isDiscoveryLoading}
                 className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  isDiscoveryEnabled ? "bg-success" : "bg-danger-dim"
+                  isDiscoveryEnabled ? "bg-success" : "bg-danger"
                 }`}
                 role="switch"
                 aria-checked={isDiscoveryEnabled}

@@ -23,15 +23,10 @@
   --color-accent-strong: #0891b2;
   --color-accent-light: #22d3ee;
   --color-accent-gradient: linear-gradient(135deg, #0e7490 0%, #06b6d4 100%);
-  --color-accent-gradient-hover: linear-gradient(135deg, #0891b2 0%, #22d3ee 100%);
-  --color-accent-gradient-soft: linear-gradient(135deg, rgba(6, 182, 212, 0.10) 0%, rgba(34, 211, 238, 0.03) 100%);
 
   --color-success: #10b981;
-  --color-success-dim: rgba(16, 185, 129, 0.12);
   --color-warning: #f59e0b;
-  --color-warning-dim: rgba(245, 158, 11, 0.12);
   --color-danger: #ef4444;
-  --color-danger-dim: rgba(239, 68, 68, 0.12);
 }
 
 .dark {
@@ -52,15 +47,10 @@
   --color-accent-strong: #0891b2;
   --color-accent-light: #22d3ee;
   --color-accent-gradient: linear-gradient(135deg, #0e7490 0%, #06b6d4 100%);
-  --color-accent-gradient-hover: linear-gradient(135deg, #0891b2 0%, #22d3ee 100%);
-  --color-accent-gradient-soft: linear-gradient(135deg, rgba(6, 182, 212, 0.24) 0%, rgba(34, 211, 238, 0.06) 100%);
 
   --color-success: #34d399;
-  --color-success-dim: rgba(52, 211, 153, 0.14);
   --color-warning: #f5b942;
-  --color-warning-dim: rgba(245, 185, 66, 0.14);
   --color-danger: #f2695c;
-  --color-danger-dim: rgba(242, 105, 92, 0.14);
 }
 
 body {
@@ -119,14 +109,6 @@ body {
   color: var(--color-text-muted);
 }
 
-.section-heading {
-  margin-top: 2rem;
-  margin-bottom: 0.875rem;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-muted);
-}
-
 /* Cards */
 .card {
   background-color: var(--color-bg-card);
@@ -175,10 +157,6 @@ body {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset, 0 4px 14px rgba(6, 182, 212, 0.35);
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-gradient-hover);
-}
-
 .btn-secondary {
   background: transparent;
   border-color: var(--color-border-strong);
@@ -187,14 +165,6 @@ body {
 
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--color-bg-card-hover);
-}
-
-.btn-danger {
-  color: var(--color-danger);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background-color: var(--color-danger-dim);
 }
 
 /* Badges */
@@ -209,18 +179,7 @@ body {
 }
 
 .badge-success {
-  background-color: var(--color-success-dim);
   color: var(--color-success);
-}
-
-.badge-warning {
-  background-color: var(--color-warning-dim);
-  color: var(--color-warning);
-}
-
-.badge-danger {
-  background-color: var(--color-danger-dim);
-  color: var(--color-danger);
 }
 
 .badge-accent {
@@ -255,30 +214,20 @@ body {
 }
 
 /* Status Indicators */
-.is-success { color: var(--color-success); }
-.is-warning { color: var(--color-warning); }
-.is-danger { color: var(--color-danger); }
-.is-active { color: var(--color-accent); }
-
-.dark .is-active { color: var(--color-accent-light); }
-
 /* Live indicator dot, paired with a count or label */
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: 9999px;
   background-color: var(--color-success);
-  box-shadow: 0 0 0 3px var(--color-success-dim);
 }
 
 .status-dot-off {
   background-color: var(--color-text-faint);
-  box-shadow: 0 0 0 3px transparent;
 }
 
 .status-dot-error {
   background-color: var(--color-danger);
-  box-shadow: 0 0 0 3px var(--color-danger-dim);
 }
 
 /* Empty State */
