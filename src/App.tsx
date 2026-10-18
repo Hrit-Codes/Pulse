@@ -25,6 +25,7 @@ import {
   submitPin,
 } from "./api";
 import { baseName } from "./format";
+import { TransfersPage } from "./components/TransfersPage";
 
 const LOCAL_DEVICE_NAME = "User Device";
 
@@ -349,6 +350,13 @@ export default function App() {
             localDeviceName={identity?.name ?? LOCAL_DEVICE_NAME}
             localIp={localIp}
             trustedDevices={mockDevices}
+          />
+        )}
+        {page === "transfers" && (
+          <TransfersPage
+            allTransfers={transfers}
+            resumeableIds={resumableIds}
+            onResume={handleResume}
           />
         )}
       </main>
