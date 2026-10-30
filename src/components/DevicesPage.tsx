@@ -1,15 +1,29 @@
-import { CheckIcon, FileWarningIcon, PauseIcon, WifiIcon, LoaderIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  CheckIcon,
+  FileWarningIcon,
+  FlaskConicalIcon,
+  LoaderIcon,
+  PauseIcon,
+  PlayIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+  WifiIcon,
+} from "lucide-react";
+import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Device, Transfer } from "../types";
 import { DeviceCard } from "../components/DeviceCard";
 import { formatBytes } from "../format";
 import { SendFileModal } from "./SendFileModel";
-import { fetchDevices } from "../hooks/useDevices";
+import { useDevices } from "../hooks/useDevices";
 
 interface DevicesPageProps {
-  devices: Device[];          
   recentTransfers: Transfer[];
-  onSendFiles: (device: Device, files: File[]) => void;
+  onSendFiles: (device: Device, path: string) => void;
+  onSelfTest: (path: string) => void;
+  resumableIds: Set<string>;
+  onResume: (transferId: string) => void;
+  selfTestRunning?: boolean;
 }
 
 const STATUS_META: Record<
@@ -20,25 +34,38 @@ const STATUS_META: Record<
   paused: { icon: <PauseIcon size={14} />, className: "text-warning", label: "Paused" },
   failed: { icon: <FileWarningIcon size={14} />, className: "text-danger", label: "Failed" },
   transferring: { icon: <div className="w-2 h-2 rounded-full bg-accent-light animate-pulse" />, className: "text-accent-light", label: "In progress" },
+  connecting: { icon: <LoaderIcon size={14} className="animate-spin" />, className: "text-accent-light", label: "Connecting" },
 };
 
-export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPageProps) {
-  const [rdevices, setRDevices] = useState<Device[]>([]);
-  const [loading, setLoading] = useState(true);
+export function DevicesPage({
+  recentTransfers,
+  onSendFiles,
+  onSelfTest,
+  resumableIds,
+  onResume,
+  selfTestRunning,
+}: DevicesPageProps) {
+  const { devices, loading, error, onlineCount, scan } = useDevices();
   const [sendTarget, setSendTarget] = useState<Device | null>(null);
+  const [pickingTest, setPickingTest] = useState(false);
 
-  const loadDevices = async () => {
-    setLoading(true);
-    const list = await fetchDevices();
-    setRDevices(list);
-    setLoading(false);
+  const pickAndSelfTest = async () => {
+    try {
+      setPickingTest(true);
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Select a file to test transfer",
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      onSelfTest(path);
+    } catch (e) {
+      console.log("Failed to pick file for self-test::", e);
+    } finally {
+      setPickingTest(false);
+    }
   };
-
-  useEffect(() => {
-    loadDevices();
-  }, []);
-
-  const onlineCount = rdevices.filter((d) => d.status === "online").length;
 
   return (
     <div className="page">
@@ -46,7 +73,11 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
       <header className="page-header">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="status-dot inline-block" />
+            <span
+              className={`status-dot inline-block ${
+                error ? "status-dot-error" : onlineCount > 0 ? "" : "status-dot-off"
+              }`}
+            />
             <span className="text-xs font-medium text-text-muted">
               {onlineCount} device{onlineCount === 1 ? "" : "s"} online
             </span>
@@ -56,18 +87,33 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
             {onlineCount} device{onlineCount === 1 ? "" : "s"} available for transfer on this network
           </p>
         </div>
-        <button
-          className="btn btn-secondary"
-          onClick={loadDevices}
-          disabled={loading}
-        >
-          {loading ? (
-            <LoaderIcon size={16} className="animate-spin" />
-          ) : (
-            <WifiIcon size={16} />
-          )}
-          {loading ? "Scanning..." : "Scan"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-secondary"
+            onClick={pickAndSelfTest}
+            disabled={selfTestRunning || pickingTest}
+            title="Send a file to this device to verify file transfer works"
+          >
+            {selfTestRunning || pickingTest ? (
+              <LoaderIcon size={16} className="animate-spin" />
+            ) : (
+              <FlaskConicalIcon size={16} />
+            )}
+            {selfTestRunning ? "Testing..." : "Test on this device"}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={scan}
+            disabled={loading}
+          >
+            {loading ? (
+              <LoaderIcon size={16} className="animate-spin" />
+            ) : (
+              <WifiIcon size={16} />
+            )}
+            {loading ? "Scanning..." : "Scan"}
+          </button>
+        </div>
       </header>
 
       {/* Device Grid */}
@@ -75,6 +121,20 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
         <div className="flex items-center justify-center py-12">
           <LoaderIcon size={32} className="animate-spin text-accent-light" />
           <span className="ml-3 text-text-muted">Scanning for devices...</span>
+        </div>
+      ) : error ? (
+        <div className="empty-state mb-6">
+          <TriangleAlertIcon size={32} className="mx-auto mb-2 text-danger" />
+          <p>{error}</p>
+          <div className="mt-3 flex justify-center">
+            <button
+              className="btn btn-secondary text-sm"
+              onClick={scan}
+            >
+              <RefreshCwIcon size={14} />
+              Try again
+            </button>
+          </div>
         </div>
       ) : devices.length > 0 ? (
         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -105,7 +165,8 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
           <div className="space-y-2">
             {recentTransfers.map((t) => {
               const meta = STATUS_META[t.status] ?? STATUS_META.completed;
-              const progress = (t.transferredBytes / t.sizeBytes) * 100;
+              const progress = t.sizeBytes > 0 ? (t.transferredBytes / t.sizeBytes) * 100 : 0;
+              const canResume = resumableIds.has(t.id);
 
               return (
                 <div
@@ -142,6 +203,15 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
                     <span className="text-xs text-text-muted font-mono">
                       {formatBytes(t.sizeBytes)}
                     </span>
+                    {canResume && (
+                      <button
+                        className="btn btn-secondary text-xs px-2 py-1 inline-flex items-center gap-1"
+                        onClick={() => onResume(t.id)}
+                      >
+                        <PlayIcon size={12} />
+                        Resume
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -155,8 +225,8 @@ export function DevicesPage({ devices,recentTransfers, onSendFiles }: DevicesPag
         <SendFileModal
           device={sendTarget}
           onClose={() => setSendTarget(null)}
-          onSend={(files) => {
-            onSendFiles(sendTarget, files);
+          onSend={(path) => {
+            onSendFiles(sendTarget,path);
             setSendTarget(null);
           }}
         />

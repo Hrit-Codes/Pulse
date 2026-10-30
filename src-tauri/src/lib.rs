@@ -7,8 +7,9 @@ pub mod util;
 use std::{collections::HashMap, net::IpAddr, path::PathBuf};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::net::UdpSocket;
 
-use tauri::{async_runtime::JoinHandle, AppHandle, State};
+use tauri::{async_runtime::JoinHandle, AppHandle, Manager, State};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::discover::broadcaster::broadcast_discover;
@@ -27,11 +28,37 @@ pub type Devices = Arc<Mutex<HashMap<String, (DeviceInfo, IpAddr)>>>;
 pub struct ReceiverHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
 pub struct ResumeHandle(pub std::sync::Mutex<Option<JoinHandle<()>>>);
 
+// The single long-lived UDP socket used for both listening and broadcasting
+// discovery on the well-known port, so replies never depend on an ephemeral port
+pub struct DiscoverySocket(pub std::sync::Mutex<Option<Arc<tokio::net::UdpSocket>>>);
+
+impl DiscoverySocket {
+    fn get(&self) -> Result<Arc<tokio::net::UdpSocket>, String> {
+        self.0
+            .lock()
+            .map_err(|_| "discovery socket unavailable (lock poisoned)".to_string())?
+            .clone()
+            .ok_or_else(|| {
+                "Discovery is unavailable: UDP port 45820 could not be opened".to_string()
+            })
+    }
+}
+
+#[tauri::command]
+fn get_local_ip() -> Result<String, String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    socket.connect("8.8.8.8:80").map_err(|e| e.to_string())?;
+    let addr = socket.local_addr().map_err(|e| e.to_string())?;
+    Ok(addr.ip().to_string())
+}
+
 fn load_my_device() -> Result<DeviceInfo, String> {
     let store = TransferStore::new().map_err(|e| e.to_string())?;
     let (id, name) = store.get_or_create_identity().map_err(|e| e.to_string())?;
     Ok(DeviceInfo::new(id, name, TRANSFER_PORT))
 }
+
+
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -133,11 +160,12 @@ fn stop_resume_listener(handle: State<'_, ResumeHandle>) {
 }
 
 #[tauri::command]
-async fn broadcast(app: AppHandle, devices: State<'_, Devices>) -> Result<(), String> {
+async fn broadcast(socket: State<'_, DiscoverySocket>) -> Result<(), String> {
+    let socket = socket.get()?;
     let my_device = load_my_device()?;
-    let devices = devices.inner().clone();
     //function no2: runs when 'broadcast' is invoked
-    broadcast_discover(devices, my_device, Some(&app))
+    // replies are collected by the always-on listener on the same socket
+    broadcast_discover(socket, &my_device)
         .await
         .map_err(|e| e.to_string())
 }
@@ -200,32 +228,60 @@ pub fn run() {
     let devices: Devices = Arc::new(Mutex::new(HashMap::new()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PinSenders::default())
         .manage(ReceiverHandle(std::sync::Mutex::new(None)))
         .manage(ResumeHandle(std::sync::Mutex::new(None))) // was missing, needed for start_resume_listener
         .manage(devices.clone())
+        .manage(DiscoverySocket(std::sync::Mutex::new(None)))
         .setup(move |app| {
             let handle = app.handle().clone();
             let devices = devices.clone();
 
-            tauri::async_runtime::spawn(async move {
-                let my_device = match load_my_device() {
-                    Ok(d) => d,
-                    Err(msg) => {
-                        emit_error(Some(&handle), msg).await;
-                        return;
-                    }
-                };
-
-                //function no1: runs throughout the running time of the app
-                let result = listen_for_discover(devices, my_device, Some(&handle))
-                    .await
-                    .map_err(|e| e.to_string());
-
-                if let Err(msg) = result {
-                    emit_error(Some(&handle), msg).await;
-                }
+            let socket = tauri::async_runtime::block_on(async {
+                let socket =
+                    tokio::net::UdpSocket::bind(format!("0.0.0.0:{}", discover::PORT)).await?;
+                socket.set_broadcast(true)?;
+                Ok::<_, std::io::Error>(Arc::new(socket))
             });
+
+            match socket {
+                Ok(socket) => {
+                    if let Ok(mut guard) = app.state::<DiscoverySocket>().0.lock() {
+                        *guard = Some(socket.clone());
+                    }
+
+                    tauri::async_runtime::spawn(async move {
+                        let my_device = match load_my_device() {
+                            Ok(d) => d,
+                            Err(msg) => {
+                                emit_error(Some(&handle), msg).await;
+                                return;
+                            }
+                        };
+
+                        //function no1: runs throughout the running time of the app
+                        let result = listen_for_discover(socket, devices, my_device, Some(&handle))
+                            .await
+                            .map_err(|e| e.to_string());
+
+                        if let Err(msg) = result {
+                            emit_error(Some(&handle), msg).await;
+                        }
+                    });
+                }
+                Err(err) => {
+                    tauri::async_runtime::block_on(emit_error(
+                        Some(&handle),
+                        format!(
+                            "Peer discovery is unavailable: could not bind UDP port {}: {}",
+                            discover::PORT,
+                            err
+                        ),
+                    ));
+                }
+            }
 
             Ok(())
         })
@@ -241,6 +297,7 @@ pub fn run() {
             stop_resume_listener, //stop the listen resume function
             resume, //receiver invokes it asking to resume the transfer
             get_identity, //get your device identity
+            get_local_ip,
             get_pending_transfers //get all pending transfers
         ])
         .run(tauri::generate_context!())

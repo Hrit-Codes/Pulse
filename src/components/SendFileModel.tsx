@@ -1,46 +1,71 @@
-import React, { useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Device } from "../types";
 import { UploadIcon, XIcon, FileIcon } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { baseName } from "../format";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 interface SendFileModalProps {
   device: Device;
   onClose: () => void;
-  onSend: (files: File[]) => void;
+  onSend: (path: string) => void;
 }
 
 export function SendFileModal({ device, onClose, onSend }: SendFileModalProps) {
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedPath, setSelectedPath] = useState<string>();
+  const [isDragOver, setIsDragOver]=useState(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setSelectedFiles(Array.from(e.target.files));
+  // Native Tauri drag-drop (HTML5 drops don't give filesystem paths)
+  useEffect(()=>{
+    let unlisten:(()=>void) | undefined;
+    let cancelled=false;
+
+    getCurrentWebview()
+      .onDragDropEvent((event)=>{
+        const p=event.payload;
+        if(p.type==="enter" || p.type==="over"){
+          setIsDragOver(true);
+        }else if(p.type==="leave"){
+          setIsDragOver(false);
+        }else if(p.type==="drop"){
+          setIsDragOver(true);
+          setSelectedPath(`${p.paths}`);
+        }
+      })
+      .then((fn)=>{
+        if(cancelled) fn();
+        else unlisten= fn;
+      })
+
+      return()=>{
+        cancelled=true;
+        unlisten?.();
+      }
+  },[])
+
+  const pickFiles = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Select files to send",
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      setSelectedPath(path);
+    } catch (e) {
+      console.log("Failed to pick files::", e);
     }
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files) {
-      setSelectedFiles(Array.from(e.dataTransfer.files));
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const handleRemoveFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveFile = () => {
+    setSelectedPath("");
   };
 
   const handleSend = () => {
-    if (selectedFiles.length > 0) {
-      onSend(selectedFiles);
+    if (selectedPath) {
+      onSend(selectedPath);
     }
-  };
-
-  const handleClick = () => {
-    fileInputRef.current?.click();
   };
 
   return (
@@ -56,12 +81,11 @@ export function SendFileModal({ device, onClose, onSend }: SendFileModalProps) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-base font-semibold">Send to {device.name}</h2>
-            <p className="text-xs text-text-muted font-mono">{device.ip}</p>
+            <p className="text-xs text-text-muted font-mono">
+              {device.ip}:{device.port}
+            </p>
           </div>
-          <button
-            className="icon-btn icon-btn-ghost"
-            onClick={onClose}
-          >
+          <button className="icon-btn icon-btn-ghost" onClick={onClose}>
             <XIcon size={18} />
           </button>
         </div>
@@ -69,60 +93,45 @@ export function SendFileModal({ device, onClose, onSend }: SendFileModalProps) {
         {/* Dropzone */}
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
-            selectedFiles.length > 0
+            isDragOver || selectedPath
               ? "border-accent-light bg-accent-dim"
               : "border-border-strong hover:border-accent-light hover:bg-accent-dim/50"
           }`}
-          onClick={handleClick}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
+          onClick={pickFiles}
         >
           <UploadIcon
             size={32}
             className={`mx-auto mb-2 ${
-              selectedFiles.length > 0 ? "text-accent-light" : "text-text-faint"
+              selectedPath ? "text-accent-light" : "text-text-faint"
             }`}
           />
           <p className="text-sm font-medium">
-            {selectedFiles.length > 0
-              ? `${selectedFiles.length} file(s) selected`
-              : "Click to browse or drag files here"}
+            {selectedPath
+              ? `${selectedPath} file selected`
+              : "Click to browse files"}
           </p>
-          <p className="text-xs text-text-faint mt-1">
-            {selectedFiles.length > 0
-              ? selectedFiles.map((f) => f.name).join(", ")
+          {/* <p className="text-xs text-text-faint mt-1">
+            {selectedPaths
+              ? selectedPaths.map((p) => baseName(p)).join(", ")
               : "Any file type supported"}
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFileChange}
-          />
+          </p> */}
         </div>
 
         {/* Selected Files List */}
-        {selectedFiles.length > 0 && (
+        {selectedPath && (
           <div className="mt-4 space-y-1.5">
-            {selectedFiles.map((file, index) => (
               <div
-                key={index}
                 className="flex items-center gap-2 p-2 rounded bg-bg-card-hover border border-border"
               >
                 <FileIcon size={14} className="text-text-muted flex-shrink-0" />
-                <span className="text-sm truncate flex-1">{file.name}</span>
-                <span className="text-xs text-text-faint flex-shrink-0">
-                  {(file.size / 1024).toFixed(1)} KB
-                </span>
+                <span className="text-sm truncate flex-1">{baseName(selectedPath)}</span>
                 <button
                   className="icon-btn icon-btn-ghost text-text-faint hover:text-danger"
-                  onClick={() => handleRemoveFile(index)}
+                  onClick={() => handleRemoveFile()}
                 >
                   <XIcon size={14} />
                 </button>
               </div>
-            ))}
           </div>
         )}
 
@@ -133,10 +142,10 @@ export function SendFileModal({ device, onClose, onSend }: SendFileModalProps) {
           </button>
           <button
             className="btn btn-primary"
-            disabled={selectedFiles.length === 0}
+            disabled={!selectedPath}
             onClick={handleSend}
           >
-            Send {selectedFiles.length > 0 ? `(${selectedFiles.length})` : ""}
+            Send 
           </button>
         </div>
       </div>

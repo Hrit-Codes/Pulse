@@ -4,8 +4,21 @@ export interface Device {
   id: string;
   name: string;
   ip: string;
+  port: number;
   status: DeviceStatus;
   kind: "laptop" | "desktop";
+}
+
+/**
+ * Raw payload of a `scan_devices` invoke. Mirrors the Rust `DeviceInfo` struct
+ * plus the responder address the reply was received from, since the device
+ * never advertises its own IP. Normalized to `Device` by the `useDevices` hook.
+ */
+export interface DiscoveredDevice {
+  id: string;
+  name: string;
+  port: number;
+  ip: string;
 }
 
 export type TransferStatus =

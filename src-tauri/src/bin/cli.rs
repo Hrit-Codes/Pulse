@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, str::FromStr, sync::Arc};
 
 use clap::{Subcommand,Parser};
-use pulse_lib::{discover::{DeviceInfo, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
+use pulse_lib::{discover::{DeviceInfo, PORT, broadcaster::broadcast_discover, get_devices, listener::listen_for_discover},
     storage::{TransferStore, change_name}, transfer::{receiver::{receive_file, resume_transfer}, sender::{request_to_send_file, 
         run_resume_listener}}};
 use tokio::sync::{Mutex, oneshot};
@@ -47,10 +47,31 @@ async fn main(){
     let devices:Arc<Mutex<HashMap<String, (DeviceInfo,IpAddr)>>> = Arc::new(Mutex::new(HashMap::new()));
     match cli.command {
         Commands::Discover => {
-            if let Err(err) = broadcast_discover(Arc::clone(&devices),device_info,None).await {
+            let socket = match tokio::net::UdpSocket::bind(format!("0.0.0.0:{}", PORT)).await {
+                Ok(s) => {
+                    if let Err(err) = s.set_broadcast(true) {
+                        eprintln!("{}", err);
+                        return;
+                    }
+                    Arc::new(s)
+                },
+                Err(err) => {
+                    eprintln!("{}", err);
+                    return;
+                }
+            };
+            if let Err(err) = broadcast_discover(Arc::clone(&socket), &device_info).await {
                 eprintln!("{}",err);
             }
+            let listener_socket = Arc::clone(&socket);
+            let listener_devices = Arc::clone(&devices);
+            let listener_device = device_info.clone();
+            tokio::spawn(async move {
+                let _ = listen_for_discover(listener_socket, listener_devices, listener_device, None).await;
+            });
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             println!("{:?}",get_devices(Arc::clone(&devices)).await);
+            return;
         }
 
         Commands::Send{ip,file} => {
@@ -75,7 +96,14 @@ async fn main(){
             } 
         }
         Commands::ListenDiscover=>{ 
-            if let Err(err) = listen_for_discover(Arc::clone(&devices),device_info,None).await {
+            let socket = match tokio::net::UdpSocket::bind(format!("0.0.0.0:{}", PORT)).await {
+                Ok(s) => Arc::new(s),
+                Err(err) => {
+                    eprintln!("{}", err);
+                    return;
+                }
+            };
+            if let Err(err) = listen_for_discover(socket, Arc::clone(&devices),device_info,None).await {
                 eprintln!("error occurred {}", err);
             }
         }
