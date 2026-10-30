@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Device } from "../types";
-import { ShieldIcon, CheckCircleIcon, FolderIcon, InfoIcon } from "lucide-react";
+import { ShieldIcon, AlertTriangleIcon, FolderIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "../context/ThemeContext";
 import { downloadDir } from "@tauri-apps/api/path";
@@ -106,7 +106,7 @@ export function SettingsPage({ localDeviceName, localIp }: SettingsPageProps) {
                 type="button"
                 onClick={toggleDiscovery}
                 disabled={isDiscoveryLoading}
-                className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                className={`relative w-10 h-5 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   isDiscoveryEnabled ? "bg-success" : "bg-danger"
                 }`}
                 role="switch"
@@ -190,11 +190,6 @@ export function SettingsPage({ localDeviceName, localIp }: SettingsPageProps) {
           </button>
         </div>
 
-        <p className="flex items-start gap-1.5 text-xs text-text-faint mt-3">
-          <InfoIcon size={13} className="shrink-0 mt-px" />
-          Incoming files are saved to your Downloads folder. Choosing a custom location is coming
-          soon.
-        </p>
       </section>
 
       {/* Trusted devices
@@ -237,16 +232,23 @@ export function SettingsPage({ localDeviceName, localIp }: SettingsPageProps) {
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2 border-b border-border">
             <span className="text-sm text-text-muted">Transport encryption</span>
-            <span className="flex items-center gap-1.5 text-sm text-success">
-              <CheckCircleIcon size={14} />
-              TLS enabled
+            <span className="flex items-center gap-1.5 text-sm text-warning">
+              <AlertTriangleIcon size={14} />
+              Not enabled (plain TCP)
+            </span>
+          </div>
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <span className="text-sm text-text-muted">Transfer authentication</span>
+            <span className="flex items-center gap-1.5 text-sm text-text">
+              <ShieldIcon size={14} className="text-accent-light" />
+              4-digit PIN required per transfer
             </span>
           </div>
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-text-muted">Integrity check</span>
             <span className="flex items-center gap-1.5 text-sm text-text">
               <ShieldIcon size={14} className="text-accent-light" />
-              SHA-256 on every completed transfer
+              SHA-256 verified after transfer completes
             </span>
           </div>
         </div>

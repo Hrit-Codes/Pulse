@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { ClockIcon, LaptopIcon, Settings, WifiIcon } from "lucide-react";
+import { LaptopIcon, Settings, WifiIcon } from "lucide-react";
 import type { PageId } from "../types";
 
 interface NavItem {
@@ -11,7 +11,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: "devices", label: "Devices", icon: WifiIcon },
   { id: "transfers", label: "Transfers", icon: LaptopIcon },
-  { id: "history", label: "History", icon: ClockIcon },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

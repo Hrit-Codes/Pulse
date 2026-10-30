@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import { DevicesPage } from "./components/DevicesPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { PinPrompt } from "./components/PinPrompt";
+import { SenderPinDialog } from "./components/SenderPinDialog";
 import {
   DeviceInfo,
   getIdentity,
@@ -384,14 +385,7 @@ export default function App() {
       )}
 
       {senderPin && (
-        <div className="fixed bottom-6 right-6 z-40 card px-4 py-3 flex flex-col gap-1">
-          <span className="text-xs text-text-muted">
-            PIN to enter on receiver
-          </span>
-          <span className="text-2xl font-mono font-semibold tracking-[0.4em] text-accent-light">
-            {senderPin}
-          </span>
-        </div>
+        <SenderPinDialog pin={senderPin} onClose={() => setSenderPin(null)} />
       )}
 
       {pinRequest && (
