@@ -54,13 +54,19 @@ async fn receive_chunks_and_finalize(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pending_chunks = Vec::with_capacity(PENDING_CHUNKS);
 
-    loop {
+    // `while` instead of `loop` (fix 3): if every chunk was already received
+    // (or the file is empty), skip straight to the hash step instead of
+    // waiting for a Chunk frame that will never come.
+    while received_count < total_chunks {
         let result = read_frame(tcp_stream, buffer).await;
         let (msg_type, payload) = match result {
             Ok((msg, pay)) => (msg, pay),
             Err(e) => {
                 if !pending_chunks.is_empty() {
-                    store.mark_chunks_received(transfer_id, &pending_chunks)?;
+                    // fix 2: only record chunks that actually reached the OS
+                    if file.flush().await.is_ok() {
+                        store.mark_chunks_received(transfer_id, &pending_chunks)?;
+                    }
                     pending_chunks.clear();
                 }
                 return Err(e);
@@ -78,12 +84,9 @@ async fn receive_chunks_and_finalize(
                 received_count += 1;
 
                 if pending_chunks.len() == PENDING_CHUNKS {
+                    file.flush().await?; // fix 2: flush before marking
                     store.mark_chunks_received(transfer_id, &pending_chunks)?;
                     pending_chunks.clear();
-                }
-
-                if received_count == total_chunks {
-                    break;
                 }
             }
             _ => return Err("transfer protocol violation".into()),
@@ -91,6 +94,7 @@ async fn receive_chunks_and_finalize(
     }
 
     if !pending_chunks.is_empty() {
+        file.flush().await?; // fix 2
         store.mark_chunks_received(transfer_id, &pending_chunks)?;
         pending_chunks.clear();
     }
@@ -134,7 +138,10 @@ async fn receive_chunks_and_finalize(
     let payload = bincode::serialize(&complete)?;
     let frame = encode_frame(MessageType::TransferComplete, &payload);
     send_frame(tcp_stream, &frame).await?;
-    emit_message(app, "transfer_complete_receiver","File is successfully received".to_string()).await;
+    if !success {
+        return Err("file hash mismatch, transfer failed".into());
+    }
+    emit_message(app, "transfer_complete_receiver", "File is successfully received".to_string()).await;
     Ok(())
 }
 

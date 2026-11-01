@@ -332,20 +332,42 @@ export default function App() {
   }
 
   async function handleResume(transferId: string) {
+    // hide the button and show "In progress" immediately
+    setResumableIds((prev) => {
+      const next = new Set(prev);
+      next.delete(transferId);
+      return next;
+    });
+    setTransfers((prev) =>
+      prev.map((t) =>
+        t.id === transferId ? { ...t, status: "transferring" } : t
+      )
+    );
+
     try {
-      await resume(transferId);
+      await resume(transferId); // resolves when the whole resumed transfer finishes
       setTransfers((prev) =>
         prev.map((t) =>
-          t.id === transferId ? { ...t, status: "transferring" } : t
+          t.id === transferId
+            ? {
+                ...t,
+                status: "completed",
+                verified: true,
+                transferredBytes: t.sizeBytes,
+                speedMBps: 0,
+              }
+            : t
         )
       );
-      setResumableIds((prev) => {
-        const next = new Set(prev);
-        next.delete(transferId);
-        return next;
-      });
     } catch (err) {
       console.log("resume failed::", err);
+      setTransfers((prev) =>
+        prev.map((t) =>
+          t.id === transferId ? { ...t, status: "failed", speedMBps: 0 } : t
+        )
+      );
+      // bring the Resume button back so the user can retry
+      setResumableIds((prev) => new Set(prev).add(transferId));
     }
   }
 
