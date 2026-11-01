@@ -49,6 +49,7 @@ export default function App() {
   const selfTestRef = useRef(false);
   const selfTestPinRef = useRef<string | null>(null);
   const selfTestConnRef = useRef<string | null>(null);
+  const activeSendIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -147,6 +148,11 @@ export default function App() {
         // PIN accepted: hide the PIN popup and show the "sending" indicator
         setSenderPin(null);
         setSendingFile(filename);
+        const id=activeSendIdRef.current;
+        if(id){
+          setTransfers((prev)=>
+          prev.map((t)=>(t.id===id?{...t,status:"transferring"}:t)));
+        }
       }),
       onError((message) => {
         console.log("backend error::", message);
@@ -194,6 +200,8 @@ export default function App() {
       .toString(36)
       .slice(2)}`;
 
+    activeSendIdRef.current = localId;
+
     const optimistic: Transfer = {
       id: localId,
       filename: baseName(path),
@@ -232,6 +240,7 @@ export default function App() {
       );
     } finally {
       sendingRef.current = false;
+      activeSendIdRef.current = null;
       setSenderPin(null);
       setSendingFile(null);
     }
