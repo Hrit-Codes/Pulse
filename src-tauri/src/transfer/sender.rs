@@ -77,6 +77,11 @@ pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: 
     }
     
     //authorization successful
+    let filename = file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    emit_message(app, "transfer_started", filename).await;
     send_file(&mut tcp_stream,buffer, sender_id, file_path, store,app).await
 }
 

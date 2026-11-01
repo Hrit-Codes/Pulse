@@ -80,9 +80,16 @@ export async function sendFile(
 ): Promise<void> {
   try {
     await invoke("send_file", { senderId, addr, filePath });
+    console.log("sending...");
   } catch (err) {
     throw toError(err, `Failed to send file to ${addr}`);
   }
+}
+
+export function onTransferStarted(
+  handler: (filename: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>("transfer_started", (event) => handler(event.payload));
 }
 
 export async function startResumeListener(addr: string): Promise<void> {

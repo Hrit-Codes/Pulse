@@ -22,13 +22,10 @@ export interface DiscoveredDevice {
 }
 
 export type TransferStatus =
-  | "queued"
   | "connecting"
   | "transferring"
-  | "paused"
   | "failed"
-  | "completed"
-  | "cancelled";
+  | "completed";
 
 export interface Transfer {
   id: string;

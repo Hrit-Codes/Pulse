@@ -13,6 +13,7 @@ import {
   getPendingTransfers,
   onPinRequired,
   onSenderPin,
+  onTransferStarted,
   onError,
   peerAddr,
   receiverAddr,
@@ -27,6 +28,7 @@ import {
 } from "./api";
 import { baseName } from "./format";
 import { TransfersPage } from "./components/TransfersPage";
+import { SendingIndicator } from "./components/SendingIndicator";
 
 const LOCAL_DEVICE_NAME = "User Device";
 
@@ -38,6 +40,7 @@ export default function App() {
   const [resumableIds, setResumableIds] = useState<Set<string>>(new Set());
   const [pinRequest, setPinRequest] = useState<string | null>(null);
   const [senderPin, setSenderPin] = useState<string | null>(null);
+  const [sendingFile, setSendingFile] = useState<string | null>(null);
   const [selfTest, setSelfTest] = useState<{
     status: "running" | "success" | "failed";
     message: string;
@@ -71,7 +74,7 @@ export default function App() {
             transferredBytes: 0,
             direction: "received",
             deviceName: senderId,
-            status: "paused",
+            status: "failed", // interrupted transfers; still resumable via resumableIds
             speedMBps: 0,
             etaSeconds: null,
             chunkTotal: totalChunks,
@@ -140,7 +143,16 @@ export default function App() {
         setSenderPin(pin);
         void tryAutoSubmitPin();
       }),
-      onError((message) => console.log("backend error::", message))
+      onTransferStarted((filename) => {
+        // PIN accepted: hide the PIN popup and show the "sending" indicator
+        setSenderPin(null);
+        setSendingFile(filename);
+      }),
+      onError((message) => {
+        console.log("backend error::", message);
+        setSenderPin(null);
+        setSendingFile(null);
+      })
     );
 
     return () => {
@@ -221,6 +233,7 @@ export default function App() {
     } finally {
       sendingRef.current = false;
       setSenderPin(null);
+      setSendingFile(null);
     }
   }
 
@@ -293,6 +306,7 @@ export default function App() {
       selfTestPinRef.current = null;
       selfTestConnRef.current = null;
       setSenderPin(null);
+      setSendingFile(null);
       setPinRequest(null);
     }
   }
@@ -387,6 +401,8 @@ export default function App() {
       {senderPin && (
         <SenderPinDialog pin={senderPin} onClose={() => setSenderPin(null)} />
       )}
+
+      {sendingFile && <SendingIndicator filename={sendingFile} />}
 
       {pinRequest && (
         <PinPrompt
