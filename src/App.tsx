@@ -13,7 +13,11 @@ import {
   getPendingTransfers,
   onPinRequired,
   onSenderPin,
+  onTransferStarted,
   onTransferProgress,
+  onReceiveStarted,
+  onReceiveProgress,
+  onReceiveComplete,
   onError,
   peerAddr,
   receiverAddr,
@@ -28,6 +32,8 @@ import {
 } from "./api";
 import { baseName } from "./format";
 import { TransfersPage } from "./components/TransfersPage";
+import { SendingIndicator } from "./components/SendingIndicator";
+import { ReceivingIndicator } from "./components/ReceivingIndicator";
 
 const LOCAL_DEVICE_NAME = "User Device";
 
@@ -48,6 +54,15 @@ export default function App() {
   const selfTestRef = useRef(false);
   const selfTestPinRef = useRef<string | null>(null);
   const selfTestConnRef = useRef<string | null>(null);
+  const [sendingPercent, setSendingPercent] = useState<number | null>(null);
+  const [sendingFile, setSendingFile] = useState<string | null>(null);
+  const lastProgressRef = useRef<{ t: number; sent: number } | null>(null);
+
+  // receiving side
+  const [receivingFile, setReceivingFile] = useState<string | null>(null);
+  const [receivingPercent, setReceivingPercent] = useState<number | null>(null);
+  const activeReceiveIdRef = useRef<string | null>(null);
+  const lastReceiveRef = useRef<{ t: number; bytes: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -73,7 +88,7 @@ export default function App() {
             transferredBytes: 0,
             direction: "received",
             deviceName: senderId,
-            status: "paused",
+            status: "failed", // interrupted; still resumable via resumableIds
             speedMBps: 0,
             etaSeconds: null,
             chunkTotal: totalChunks,
@@ -142,22 +157,148 @@ export default function App() {
         setSenderPin(pin);
         void tryAutoSubmitPin();
       }),
-      onError((message) => console.log("backend error::", message)),
+      // PIN accepted by the receiver: close the PIN dialog, show "sending"
+      onTransferStarted((filename) => {
+        setSenderPin(null);
+        setSendingFile(filename);
+        const id = activeTransferIdRef.current;
+        if (id) {
+          setTransfers((prev) =>
+            prev.map((t) =>
+              t.id === id ? { ...t, status: "transferring" as const } : t
+            )
+          );
+        }
+      }),
       onTransferProgress((sent, total) => {
-        const transferId = activeTransferIdRef.current;
-        if (!transferId) return;
+        const id = activeTransferIdRef.current;
+        if (!id || total <= 0) return;
+
+        const now = performance.now();
+        const last = lastProgressRef.current;
+        let speed = 0;
+        if (last && now > last.t) {
+          speed = (sent - last.sent) / (1024 * 1024) / ((now - last.t) / 1000);
+        }
+        lastProgressRef.current = { t: now, sent };
+
+        const percent = Math.min((sent / total) * 100, 100);
+        setSendingPercent(percent);
         setTransfers((prev) =>
           prev.map((t) => {
-            if (t.id !== transferId) return t;
+            if (t.id !== id) return t;
             const sizeBytes = t.sizeBytes > 0 ? t.sizeBytes : total;
             return {
               ...t,
               status: "transferring" as const,
               sizeBytes,
               transferredBytes: Math.min(sent, sizeBytes),
+              speedMBps: speed > 0 ? speed : t.speedMBps,
             };
           })
         );
+      }),
+      // a file started arriving (fresh or resumed)
+      onReceiveStarted(({ transferId, sizeBytes, senderId, filename }) => {
+        if (selfTestRef.current) return; // loopback test: don't show a second row
+        activeReceiveIdRef.current = transferId;
+        lastReceiveRef.current = null;
+        setReceivingFile(filename);
+        setReceivingPercent(null);
+        setTransfers((prev) => {
+          // a resumed transfer already has a row, so just update it
+          if (prev.some((t) => t.id === transferId)) {
+            return prev.map((t) =>
+              t.id === transferId ? { ...t, status: "transferring" as const } : t
+            );
+          }
+          const incoming: Transfer = {
+            id: transferId,
+            filename,
+            sizeBytes,
+            transferredBytes: 0,
+            direction: "received",
+            deviceName: senderId.slice(0, 8),
+            status: "transferring",
+            speedMBps: 0,
+            etaSeconds: null,
+            chunkTotal: 0,
+            chunksDone: 0,
+            verified: null,
+            hash: "pending",
+            date: new Date().toISOString(),
+          };
+          return [incoming, ...prev];
+        });
+      }),
+      onReceiveProgress((done, total) => {
+        const id = activeReceiveIdRef.current;
+        if (!id || total <= 0) return;
+        const percent = Math.min((done / total) * 100, 100);
+        setReceivingPercent(percent);
+
+        setTransfers((prev) =>
+          prev.map((t) => {
+            if (t.id !== id) return t;
+            const bytes = Math.round((t.sizeBytes * percent) / 100);
+            const now = performance.now();
+            const last = lastReceiveRef.current;
+            let speed = 0;
+            if (last && now > last.t) {
+              speed = (bytes - last.bytes) / (1024 * 1024) / ((now - last.t) / 1000);
+            }
+            lastReceiveRef.current = { t: now, bytes };
+            return {
+              ...t,
+              status: "transferring" as const,
+              transferredBytes: bytes,
+              chunksDone: done,
+              chunkTotal: total,
+              speedMBps: speed > 0 ? speed : t.speedMBps,
+            };
+          })
+        );
+      }),
+      onReceiveComplete(() => {
+        const id = activeReceiveIdRef.current;
+        if (id) {
+          setTransfers((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    status: "completed" as const,
+                    verified: true,
+                    transferredBytes: t.sizeBytes,
+                    speedMBps: 0,
+                  }
+                : t
+            )
+          );
+        }
+        activeReceiveIdRef.current = null;
+        lastReceiveRef.current = null;
+        setReceivingFile(null);
+        setReceivingPercent(null);
+      }),
+      onError((message) => {
+        console.log("backend error::", message);
+        setSenderPin(null);
+        setSendingFile(null);
+        setSendingPercent(null);
+
+        const rid = activeReceiveIdRef.current;
+        if (rid) {
+          setTransfers((prev) =>
+            prev.map((t) =>
+              t.id === rid ? { ...t, status: "failed" as const, speedMBps: 0 } : t
+            )
+          );
+          activeReceiveIdRef.current = null;
+          lastReceiveRef.current = null;
+          setReceivingFile(null);
+          setReceivingPercent(null);
+        }
       })
     );
 
@@ -195,6 +336,10 @@ export default function App() {
     }
 
     sendingRef.current = true;
+    setSenderPin(null);
+    setSendingFile(null); // set by transfer_started once the PIN is accepted
+    setSendingPercent(null);
+    lastProgressRef.current = null;
 
     const localId = `local-${Date.now()}-${Math.random()
       .toString(36)
@@ -226,7 +371,13 @@ export default function App() {
       setTransfers((prev) =>
         prev.map((t) =>
           t.id === localId
-            ? { ...t, status: "completed", verified: true }
+            ? {
+                ...t,
+                status: "completed",
+                verified: true,
+                transferredBytes: t.sizeBytes,
+                speedMBps: 0,
+              }
             : t
         )
       );
@@ -234,13 +385,16 @@ export default function App() {
       console.log("send_file failed::", err);
       setTransfers((prev) =>
         prev.map((t) =>
-          t.id === localId ? { ...t, status: "failed" } : t
+          t.id === localId ? { ...t, status: "failed", speedMBps: 0 } : t
         )
       );
     } finally {
       sendingRef.current = false;
       activeTransferIdRef.current = null;
       setSenderPin(null);
+      setSendingFile(null);
+      setSendingPercent(null);
+      lastProgressRef.current = null;
     }
   }
 
@@ -258,6 +412,10 @@ export default function App() {
     selfTestRef.current = true;
     selfTestPinRef.current = null;
     selfTestConnRef.current = null;
+    setSenderPin(null);
+    setSendingFile(null); // set by transfer_started once the PIN is accepted
+    setSendingPercent(null);
+    lastProgressRef.current = null;
 
     const localId = `selftest-${Date.now()}`;
     activeTransferIdRef.current = localId;
@@ -289,7 +447,13 @@ export default function App() {
       setTransfers((prev) =>
         prev.map((t) =>
           t.id === localId
-            ? { ...t, status: "completed", verified: true }
+            ? {
+                ...t,
+                status: "completed",
+                verified: true,
+                transferredBytes: t.sizeBytes,
+                speedMBps: 0,
+              }
             : t
         )
       );
@@ -300,7 +464,9 @@ export default function App() {
     } catch (err) {
       console.log("self-test failed::", err);
       setTransfers((prev) =>
-        prev.map((t) => (t.id === localId ? { ...t, status: "failed" } : t))
+        prev.map((t) =>
+          t.id === localId ? { ...t, status: "failed", speedMBps: 0 } : t
+        )
       );
       setSelfTest({
         status: "failed",
@@ -316,6 +482,9 @@ export default function App() {
       setSenderPin(null);
       setPinRequest(null);
       activeTransferIdRef.current = null;
+      setSendingFile(null);
+      setSendingPercent(null);
+      lastProgressRef.current = null;
     }
   }
 
@@ -331,20 +500,41 @@ export default function App() {
   }
 
   async function handleResume(transferId: string) {
+    // hide the button and show "In progress" immediately
+    setResumableIds((prev) => {
+      const next = new Set(prev);
+      next.delete(transferId);
+      return next;
+    });
+    setTransfers((prev) =>
+      prev.map((t) =>
+        t.id === transferId ? { ...t, status: "transferring" } : t
+      )
+    );
+
     try {
-      await resume(transferId);
+      await resume(transferId); // resolves when the resumed transfer finishes
       setTransfers((prev) =>
         prev.map((t) =>
-          t.id === transferId ? { ...t, status: "transferring" } : t
+          t.id === transferId
+            ? {
+                ...t,
+                status: "completed",
+                verified: true,
+                transferredBytes: t.sizeBytes,
+                speedMBps: 0,
+              }
+            : t
         )
       );
-      setResumableIds((prev) => {
-        const next = new Set(prev);
-        next.delete(transferId);
-        return next;
-      });
     } catch (err) {
       console.log("resume failed::", err);
+      setTransfers((prev) =>
+        prev.map((t) =>
+          t.id === transferId ? { ...t, status: "failed", speedMBps: 0 } : t
+        )
+      );
+      setResumableIds((prev) => new Set(prev).add(transferId));
     }
   }
 
@@ -414,6 +604,18 @@ export default function App() {
         <PinPrompt
           onSubmit={handlePinSubmit}
           onCancel={() => setPinRequest(null)}
+        />
+      )}
+
+      {sendingFile && (
+        <SendingIndicator filename={sendingFile} percent={sendingPercent} />
+      )}
+
+      {receivingFile && (
+        <ReceivingIndicator
+          filename={receivingFile}
+          percent={receivingPercent}
+          stacked={!!sendingFile}
         />
       )}
     </div>

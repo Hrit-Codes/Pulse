@@ -1,10 +1,10 @@
 use std::{collections::HashMap, error::Error, io::{self, SeekFrom}, net::{IpAddr, SocketAddr}, sync::Arc};
-
+use std::time::{Duration, Instant};
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
 use tauri::AppHandle;
 use tokio::{io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::{Mutex, oneshot}};
-use crate::{PinSenders, discover::DeviceInfo, protocol::frame::{MessageType, encode_frame}, 
+use crate::{PinSenders, discover::DeviceInfo, protocol::frame::{MessageType, encode_frame},
     storage::{TransferStatus, TransferStore}, transfer::{CHUNK_SIZE, Chunk, FileHash, FileMetadata, RequestPin,
         ResumeRequest, TransferAccept, TransferComplete, TransferReject, TransferRequest,
         stream::{connect_to_peer, read_frame, send_frame}}, util::{emit_error, emit_message}};
@@ -53,14 +53,20 @@ async fn receive_chunks_and_finalize(
     app:Option<&AppHandle>
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pending_chunks = Vec::with_capacity(PENDING_CHUNKS);
+    let mut last_emit = Instant::now();
 
-    loop {
+    // `while` instead of `loop`: if every chunk was already received (or the
+    // file is empty), skip straight to the hash step.
+    while received_count < total_chunks {
         let result = read_frame(tcp_stream, buffer).await;
         let (msg_type, payload) = match result {
             Ok((msg, pay)) => (msg, pay),
             Err(e) => {
                 if !pending_chunks.is_empty() {
-                    store.mark_chunks_received(transfer_id, &pending_chunks)?;
+                    // only record chunks that actually reached the OS
+                    if file.flush().await.is_ok() {
+                        store.mark_chunks_received(transfer_id, &pending_chunks)?;
+                    }
                     pending_chunks.clear();
                 }
                 return Err(e);
@@ -78,26 +84,47 @@ async fn receive_chunks_and_finalize(
                 received_count += 1;
 
                 if pending_chunks.len() == PENDING_CHUNKS {
+                    file.flush().await?; // flush before marking as received
                     store.mark_chunks_received(transfer_id, &pending_chunks)?;
                     pending_chunks.clear();
                 }
 
-                if received_count == total_chunks {
-                    break;
+                // throttled progress for the UI
+                if last_emit.elapsed() >= Duration::from_millis(100) {
+                    emit_message(app, "receive_progress", format!("{},{}", received_count, total_chunks)).await;
+                    last_emit = Instant::now();
                 }
+            }
+            MessageType::TransferReject => {
+                let reject: TransferReject = bincode::deserialize(&payload)?;
+                if !pending_chunks.is_empty() {
+                    if file.flush().await.is_ok() {
+                        store.mark_chunks_received(transfer_id, &pending_chunks)?;
+                    }
+                    pending_chunks.clear();
+                }
+                return Err(format!("sender refused resume: {}", reject.reason).into());
             }
             _ => return Err("transfer protocol violation".into()),
         }
     }
 
     if !pending_chunks.is_empty() {
+        file.flush().await?;
         store.mark_chunks_received(transfer_id, &pending_chunks)?;
         pending_chunks.clear();
     }
 
+    // final 100% tick
+    emit_message(app, "receive_progress", format!("{},{}", received_count, total_chunks)).await;
+
     let (msg_type, payload) = read_frame(tcp_stream, buffer).await?;
     let file_hash: FileHash = match msg_type {
         MessageType::FileHash => bincode::deserialize(&payload)?,
+        MessageType::TransferReject => {
+            let reject: TransferReject = bincode::deserialize(&payload)?;
+            return Err(format!("sender refused resume: {}", reject.reason).into());
+        }
         _ => return Err("transfer protocol violation".into()),
     };
 
@@ -134,7 +161,11 @@ async fn receive_chunks_and_finalize(
     let payload = bincode::serialize(&complete)?;
     let frame = encode_frame(MessageType::TransferComplete, &payload);
     send_frame(tcp_stream, &frame).await?;
-    emit_message(app, "transfer_complete_receiver","File is successfully received".to_string()).await;
+
+    if !success {
+        return Err("file hash mismatch, transfer failed".into());
+    }
+    emit_message(app, "transfer_complete_receiver", "File is successfully received".to_string()).await;
     Ok(())
 }
 
@@ -176,6 +207,14 @@ async fn handle_connection(mut tcp_stream: TcpStream, store: Arc<TransferStore>,
 
                     store.create_transfer(&metadata.transfer_id,&request.filename,request.file_size,
                         metadata.total_chunks,metadata.chunk_size,&request.sender_id)?;
+
+                    // tell the UI a file is arriving (filename last: it may contain '|')
+                    emit_message(
+                        app.as_ref(),
+                        "receive_started",
+                        format!("{}|{}|{}|{}", metadata.transfer_id, request.file_size,
+                            request.sender_id, request.filename),
+                    ).await;
 
                     let chunk_dir = store.get_chunk_dir()?;
 
@@ -219,7 +258,7 @@ pub async fn resume_transfer(
     app:Option<&AppHandle>
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let pending = store.get_in_progress_transfers()?;
-    let (_, sender_id, filename, _file_size, total_chunks) = pending
+    let (_, sender_id, filename, file_size, total_chunks) = pending
         .into_iter()
         .find(|(id, _, _, _, _)| id == &transfer_id)
         .ok_or("transfer not found")?;
@@ -253,6 +292,13 @@ pub async fn resume_transfer(
         .write(true)
         .open(&output_path)
         .await?;
+
+    // tell the UI the (resumed) file is arriving
+    emit_message(
+        app,
+        "receive_started",
+        format!("{}|{}|{}|{}", transfer_id, file_size, sender_id, filename),
+    ).await;
 
     receive_chunks_and_finalize(
         &mut tcp_stream,
