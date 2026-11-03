@@ -1,4 +1,4 @@
-use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, path::Path, sync::Arc};
+use std::{collections::HashSet, error::Error, io::SeekFrom, net::SocketAddr, path::Path, sync::Arc, time::{Duration, Instant}};
 
 use bytes::BytesMut;
 use sha2::{Sha256,Digest};
@@ -138,6 +138,9 @@ async fn send_file(
             let mut buf = vec![0u8; CHUNK_SIZE];
             let mut hasher = Sha256::new();
             let mut chunk_index = 0;
+            let total_bytes = file_size as u64;
+            let mut sent_bytes: u64 = 0;
+            let mut last_emit = Instant::now();
 
             loop {
                 //file read
@@ -155,10 +158,19 @@ async fn send_file(
                 // tcp_stream.write_all(&buf[..n]).await?;
                 // --- end replacement ---
                 chunk_index += 1;
+                sent_bytes += n as u64;
+
+                // throttle so we don't flood the event channel
+                if last_emit.elapsed() >= Duration::from_millis(100) {
+                    emit_message(app, "transfer_progress", format!("{},{}", sent_bytes, total_bytes)).await;
+                    last_emit = Instant::now();
+                }
             }
 
+            // final 100% tick
+            emit_message(app, "transfer_progress", format!("{},{}", sent_bytes, total_bytes)).await;
+
             let hash_bytes = hasher.finalize();
-            let file_hash = FileHash(hex::encode(hash_bytes));
 
             send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash,app).await?;
         }
