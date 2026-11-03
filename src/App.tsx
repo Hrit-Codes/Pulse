@@ -13,6 +13,7 @@ import {
   getPendingTransfers,
   onPinRequired,
   onSenderPin,
+  onTransferProgress,
   onError,
   peerAddr,
   receiverAddr,
@@ -43,6 +44,7 @@ export default function App() {
     message: string;
   } | null>(null);
   const sendingRef = useRef(false);
+  const activeTransferIdRef = useRef<string | null>(null);
   const selfTestRef = useRef(false);
   const selfTestPinRef = useRef<string | null>(null);
   const selfTestConnRef = useRef<string | null>(null);
@@ -140,7 +142,23 @@ export default function App() {
         setSenderPin(pin);
         void tryAutoSubmitPin();
       }),
-      onError((message) => console.log("backend error::", message))
+      onError((message) => console.log("backend error::", message)),
+      onTransferProgress((sent, total) => {
+        const transferId = activeTransferIdRef.current;
+        if (!transferId) return;
+        setTransfers((prev) =>
+          prev.map((t) => {
+            if (t.id !== transferId) return t;
+            const sizeBytes = t.sizeBytes > 0 ? t.sizeBytes : total;
+            return {
+              ...t,
+              status: "transferring" as const,
+              sizeBytes,
+              transferredBytes: Math.min(sent, sizeBytes),
+            };
+          })
+        );
+      })
     );
 
     return () => {
@@ -181,6 +199,7 @@ export default function App() {
     const localId = `local-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2)}`;
+    activeTransferIdRef.current = localId;
 
     const optimistic: Transfer = {
       id: localId,
@@ -220,6 +239,7 @@ export default function App() {
       );
     } finally {
       sendingRef.current = false;
+      activeTransferIdRef.current = null;
       setSenderPin(null);
     }
   }
@@ -240,6 +260,7 @@ export default function App() {
     selfTestConnRef.current = null;
 
     const localId = `selftest-${Date.now()}`;
+    activeTransferIdRef.current = localId;
     const optimistic: Transfer = {
       id: localId,
       filename: baseName(path),
@@ -294,6 +315,7 @@ export default function App() {
       selfTestConnRef.current = null;
       setSenderPin(null);
       setPinRequest(null);
+      activeTransferIdRef.current = null;
     }
   }
 

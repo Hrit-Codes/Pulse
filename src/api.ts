@@ -142,6 +142,15 @@ export function onTransferComplete(
   );
 }
 
+export function onTransferProgress(
+  handler: (sent: number, total: number) => void
+): Promise<UnlistenFn> {
+  return listen<string>("transfer_progress", (event) => {
+    const [sent, total] = event.payload.split(",").map(Number);
+    handler(sent, total);
+  });
+}
+
 export function onError(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("error", (event) => handler(event.payload));
 }
