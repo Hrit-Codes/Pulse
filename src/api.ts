@@ -142,6 +142,12 @@ export function onTransferComplete(
   );
 }
 
+export function onTransferStarted(
+  handler: (filename: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>("transfer_started", (event) => handler(event.payload));
+}
+
 export function onTransferProgress(
   handler: (sent: number, total: number) => void
 ): Promise<UnlistenFn> {
@@ -157,4 +163,36 @@ export function onError(handler: (message: string) => void): Promise<UnlistenFn>
 
 export function onDevicesChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("devices_changed", () => handler());
+}
+
+export function onReceiveStarted(
+  handler: (info: {
+    transferId: string;
+    sizeBytes: number;
+    senderId: string;
+    filename: string;
+  }) => void
+): Promise<UnlistenFn> {
+  return listen<string>("receive_started", (event) => {
+    const [transferId, size, senderId, ...rest] = event.payload.split("|");
+    handler({
+      transferId,
+      sizeBytes: Number(size),
+      senderId,
+      filename: rest.join("|"),
+    });
+  });
+}
+
+export function onReceiveProgress(
+  handler: (done: number, total: number) => void
+): Promise<UnlistenFn> {
+  return listen<string>("receive_progress", (event) => {
+    const [done, total] = event.payload.split(",").map(Number);
+    handler(done, total);
+  });
+}
+
+export function onReceiveComplete(handler: () => void): Promise<UnlistenFn> {
+  return listen("transfer_complete_receiver", () => handler());
 }

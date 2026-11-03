@@ -28,7 +28,7 @@ async fn send_file_hash_and_await_completion(
     tcp_stream: &mut TcpStream,
     buffer: &mut BytesMut,
     file_hash: FileHash,
-    app:Option<&AppHandle>
+    app: Option<&AppHandle>
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let payload = bincode::serialize(&file_hash)?;
     let frame = encode_frame(MessageType::FileHash, &payload);
@@ -51,21 +51,21 @@ async fn send_file_hash_and_await_completion(
     Ok(())
 }
 
-pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: &Path,store: Arc<TransferStore>,
-    app:Option<&AppHandle>)->
-    Result<(),Box<dyn Error + Send + Sync>>{
+pub async fn request_to_send_file(sender_id: String, addr: SocketAddr, file_path: &Path, store: Arc<TransferStore>,
+    app: Option<&AppHandle>) ->
+    Result<(), Box<dyn Error + Send + Sync>> {
     let mut tcp_stream = connect_to_peer(addr).await?;
     //authorization
     let pin = generate_pin();
     emit_message(app, "pin", pin.clone()).await;
     let mut buffer = BytesMut::new();
-    let (response_type,payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+    let (response_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
     match response_type {
         MessageType::RequestPin => {
-            let new_pin:RequestPin = bincode::deserialize(&payload)?;
-            if !check_equal(pin, new_pin.0){
-                let transfer_reject = TransferReject{
-                    reason:"file transfer rejected: incorrect pin".to_string()
+            let new_pin: RequestPin = bincode::deserialize(&payload)?;
+            if !check_equal(pin, new_pin.0) {
+                let transfer_reject = TransferReject {
+                    reason: "file transfer rejected: incorrect pin".to_string()
                 };
                 let payload = bincode::serialize(&transfer_reject)?;
                 let frame = encode_frame(MessageType::TransferReject, &payload);
@@ -75,21 +75,26 @@ pub async fn request_to_send_file(sender_id: String,addr: SocketAddr,file_path: 
         },
         _ => return Err("transfer protocol violation".into())
     }
-    
-    //authorization successful
-    send_file(&mut tcp_stream,buffer, sender_id, file_path, store,app).await
+
+    //authorization successful: tell the UI to close the PIN dialog and show "sending"
+    let filename = file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    emit_message(app, "transfer_started", filename).await;
+
+    send_file(&mut tcp_stream, buffer, sender_id, file_path, store, app).await
 }
 
 async fn send_file(
-    mut tcp_stream: &mut TcpStream,
+    tcp_stream: &mut TcpStream,
     mut buffer: BytesMut,
     sender_id: String,
     file_path: &Path,
     store: Arc<TransferStore>,
     app: Option<&AppHandle>
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let transfer_id = Uuid::new_v4().to_string(); //sender is generating a new trasfer_id for every
-    //fn call
+    let transfer_id = Uuid::new_v4().to_string(); //sender generates a new transfer_id per call
     let file_data = tokio::fs::metadata(file_path).await?;
     let filename = file_path
         .file_name()
@@ -106,10 +111,9 @@ async fn send_file(
     let payload = bincode::serialize(&transfer_req)?;
     let frame = encode_frame(MessageType::TransferRequest, &payload);
 
-    // let mut tcp_stream = connect_to_peer(addr).await?;
-    send_frame(&mut tcp_stream, &frame).await?;
+    send_frame(tcp_stream, &frame).await?;
 
-    let (response_type, response_payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+    let (response_type, response_payload) = read_frame(tcp_stream, &mut buffer).await?;
 
     match response_type {
         MessageType::TransferReject => {
@@ -117,20 +121,18 @@ async fn send_file(
             return Err(format!("Transfer rejected: {}", reject_msg.reason).into());
         }
         MessageType::TransferAccept => {
-            // let file_bytes = tokio::fs::read(file_path).await?; //not supposed to do this
             store.record_sent_transfer(&transfer_id, &file_path.to_string_lossy())?;
 
             let file_size = file_data.len() as usize;
             let file_metadata = FileMetadata {
                 transfer_id: transfer_id.clone(),
-                // file_hash:file_hash.clone(),
                 chunk_size: CHUNK_SIZE,
                 total_chunks: (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE,
             };
             let payload = bincode::serialize(&file_metadata)?;
             let frame = encode_frame(MessageType::FileMetadata, &payload);
 
-            send_frame(&mut tcp_stream, &frame).await?; //file metadata has been sent
+            send_frame(tcp_stream, &frame).await?; //file metadata has been sent
 
             let mut file_handle = tokio::fs::File::open(file_path).await?;
             file_handle.seek(SeekFrom::Start(0)).await?;
@@ -143,20 +145,12 @@ async fn send_file(
             let mut last_emit = Instant::now();
 
             loop {
-                //file read
                 let n = file_handle.read(&mut buf).await?;
                 if n == 0 {
                     break;
                 }
                 hasher.update(&buf[..n]);
-                send_chunk(&mut tcp_stream, chunk_index, buf[..n].to_vec()).await?;
-                // --- replacement: zero-alloc direct write ---
-                // let payload_len = (8 + n) as u32;
-                // tcp_stream.write_all(&payload_len.to_be_bytes()).await?;
-                // tcp_stream.write_all(&[MessageType::Chunk as u8]).await?;
-                // tcp_stream.write_all(&chunk_index.to_le_bytes()).await?;
-                // tcp_stream.write_all(&buf[..n]).await?;
-                // --- end replacement ---
+                send_chunk(tcp_stream, chunk_index, buf[..n].to_vec()).await?;
                 chunk_index += 1;
                 sent_bytes += n as u64;
 
@@ -170,9 +164,9 @@ async fn send_file(
             // final 100% tick
             emit_message(app, "transfer_progress", format!("{},{}", sent_bytes, total_bytes)).await;
 
-            let hash_bytes = hasher.finalize();
+            let file_hash = FileHash(hex::encode(hasher.finalize()));
 
-            send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash,app).await?;
+            send_file_hash_and_await_completion(tcp_stream, &mut buffer, file_hash, app).await?;
         }
         _ => {
             return Err(format!("unexpected response: {:?}", response_type).into())
@@ -183,20 +177,26 @@ async fn send_file(
 }
 
 pub async fn run_resume_listener(addr: SocketAddr, store: Arc<TransferStore>,
-    app:Option<&AppHandle>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    app: Option<&AppHandle>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     loop {
-        let (stream, _peer_addr) = listener.accept().await?;
-        if let Err(err) = handle_resume_request(stream, Arc::clone(&store),app).await {
-            emit_error(app, err.to_string()).await;
+        let (mut stream, _peer_addr) = listener.accept().await?;
+        if let Err(err) = handle_resume_request(&mut stream, Arc::clone(&store), app).await {
+            let reason = err.to_string();
+            // tell the receiver why, instead of silently closing the socket
+            if let Ok(payload) = bincode::serialize(&TransferReject { reason: reason.clone() }) {
+                let frame = encode_frame(MessageType::TransferReject, &payload);
+                let _ = send_frame(&mut stream, &frame).await;
+            }
+            emit_error(app, reason).await;
         }
     }
 }
 
-async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferStore>,app:Option<&AppHandle>
+async fn handle_resume_request(tcp_stream: &mut TcpStream, store: Arc<TransferStore>, app: Option<&AppHandle>
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut buffer = BytesMut::new();
-    let (msg_type, payload) = read_frame(&mut tcp_stream, &mut buffer).await?;
+    let (msg_type, payload) = read_frame(tcp_stream, &mut buffer).await?;
 
     match msg_type {
         MessageType::ResumeRequest => {
@@ -221,7 +221,7 @@ async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferSto
                         file_handle.seek(SeekFrom::Start(offset)).await?;
                         let n = file_handle.read(&mut buf).await?;
 
-                        send_chunk(&mut tcp_stream, i, buf[..n].to_vec()).await?;
+                        send_chunk(tcp_stream, i, buf[..n].to_vec()).await?;
                     }
                     file_handle.flush().await?;
                     file_handle.seek(SeekFrom::Start(0)).await?;
@@ -237,7 +237,7 @@ async fn handle_resume_request(mut tcp_stream: TcpStream, store: Arc<TransferSto
 
                     let file_hash = FileHash(hex::encode(hasher.finalize()));
 
-                    send_file_hash_and_await_completion(&mut tcp_stream, &mut buffer, file_hash,app).await?;
+                    send_file_hash_and_await_completion(tcp_stream, &mut buffer, file_hash, app).await?;
                 }
                 None => return Err("unknown transfer id /invalid request".into()),
             }
